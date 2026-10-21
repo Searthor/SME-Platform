@@ -11,6 +11,7 @@ import {
   CloseSessionDto,
   CreateSaleDto,
   OpenSessionDto,
+  QuoteSaleDto,
   SaleListQueryDto,
 } from './dto/pos.dto'
 
@@ -102,6 +103,12 @@ export class PosController {
     if (q) params.q = q
     if (warehouseId) params.warehouseId = warehouseId
     return this.posService.searchProducts(params)
+  }
+
+  @Post('quote')
+  @RequirePermissions('sale.create')
+  quoteSale(@Body() dto: QuoteSaleDto) {
+    return this.posService.quoteSale(dto)
   }
 
   @Post('sales')

@@ -164,6 +164,8 @@ The client sends intent:
 
 It does not submit authoritative unit price, subtotal, tax or total. The response returns server-calculated snapshots. If a client displays a preview, completion may still return changed pricing/availability; a future quote/version mechanism can guarantee a price for a bounded interval.
 
+Implemented POS contract: `POST /pos/quote` takes `{ branchId, customerId?, priceGroupId?, manualDiscount?: { type: "AMOUNT" | "PERCENT", value }, items: [{ variantId, quantity }] }` and returns the server-priced lines (including promotion gift lines), applied promotions and totals. `POST /pos/sales` takes the same fields plus session, payments and `expectedGrandTotal`; any client price, discount amount, promotion ID or gift line is rejected as an unknown field. When the re-priced total differs from `expectedGrandTotal` the sale is refused with `409 SALE_TOTAL_CHANGED` and nothing is posted, so the cashier re-quotes before charging.
+
 ## 8. Security and context headers
 
 - `Authorization: Bearer <access token>` for protected APIs.

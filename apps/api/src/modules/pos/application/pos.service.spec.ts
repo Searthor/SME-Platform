@@ -5,6 +5,8 @@ import { CashMovementType, PaymentMethod, PosSessionStatus, Prisma } from '@pris
 import type { PrismaService } from '../../../core/database/prisma.service'
 import { IdempotencyService } from '../../../core/idempotency/idempotency.service'
 import type { TenantContextService } from '../../../core/tenancy/tenant-context.service'
+import type { SaleQuote } from '../domain/sale-pricing'
+import type { SalePricingService } from './sale-pricing.service'
 
 describe('PosService (POS-001, POS-002, POS-003, MON-001)', () => {
   const repository = {
@@ -27,7 +29,23 @@ describe('PosService (POS-001, POS-002, POS-003, MON-001)', () => {
   const tenantContext = { require: () => ({ businessId: 'business-1' }) } as unknown as TenantContextService
   const idempotency = new IdempotencyService(prisma, tenantContext)
 
-  const service = new PosService(repository, idempotency)
+  const d = (value: string) => new Prisma.Decimal(value)
+  const quote = (grandTotal: string): SaleQuote => ({
+    currencyCode: 'LAK',
+    lines: [],
+    subtotal: d(grandTotal),
+    lineDiscountTotal: d('0'),
+    billPromotionDiscount: d('0'),
+    manualDiscount: d('0'),
+    discountAmount: d('0'),
+    taxAmount: d('0'),
+    grandTotal: d(grandTotal),
+    appliedPromotions: [],
+    promotionId: null,
+  })
+  const pricing = { price: vi.fn() } as unknown as SalePricingService
+
+  const service = new PosService(repository, idempotency, pricing)
 
   beforeEach(() => {
     vi.clearAllMocks()
@@ -102,30 +120,44 @@ describe('PosService (POS-001, POS-002, POS-003, MON-001)', () => {
     expect(result).toEqual(mockClosedSession)
   })
 
-  it('delegates createSale to repository with line items and cash payment', async () => {
-    const mockSale = {
-      id: 'sale-1',
-      saleNumber: 'INV-202610-0001',
-      grandTotal: '45000.0000',
-      paidAmount: '50000.0000',
-      changeAmount: '5000.0000',
-    }
-    vi.mocked(repository.createSale).mockResolvedValue(mockSale as never)
+  it('persists the server quote with payments validated against the server total', async () => {
+    vi.mocked(pricing.price).mockResolvedValue({ quote: quote('45000'), customer: null })
+    vi.mocked(repository.createSale).mockResolvedValue({ id: 'sale-1' } as never)
 
     const saleDto = {
       branchId: 'branch-1',
-      items: [
-        { variantId: 'v-1', quantity: '2', unitPrice: '20000' },
-        { variantId: 'v-2', quantity: '1', unitPrice: '5000' },
-      ],
-      payments: [
-        { method: PaymentMethod.CASH, amount: '45000', tenderedAmount: '50000' },
-      ],
+      items: [{ variantId: 'v-1', quantity: '2' }],
+      payments: [{ method: PaymentMethod.CASH, amount: '45000', tenderedAmount: '50000' }],
     }
 
-    const result = await service.createSale('cashier-1', saleDto)
-    expect(repository.createSale).toHaveBeenCalledWith('cashier-1', saleDto)
-    expect(result).toEqual(mockSale)
+    await service.createSale('cashier-1', saleDto)
+
+    const [, input] = vi.mocked(repository.createSale).mock.calls[0]!
+    expect(input.quote.grandTotal.toString()).toBe('45000')
+    expect(input.payment.totalPaid.toString()).toBe('45000')
+    expect(input.payment.changeAmount.toString()).toBe('5000')
+    expect(input.payment.paymentStatus).toBe('PAID')
+  })
+
+  it('refuses the sale when the total changed since the cashier saw it', async () => {
+    vi.mocked(pricing.price).mockResolvedValue({ quote: quote('48000'), customer: null })
+
+    await expect(service.createSale('cashier-1', {
+      branchId: 'branch-1',
+      items: [{ variantId: 'v-1', quantity: '2' }],
+      expectedGrandTotal: '45000',
+    })).rejects.toMatchObject({ code: 'SALE_TOTAL_CHANGED', statusCode: 409 })
+    expect(repository.createSale).not.toHaveBeenCalled()
+  })
+
+  it('rejects payments that exceed the server total', async () => {
+    vi.mocked(pricing.price).mockResolvedValue({ quote: quote('45000'), customer: null })
+
+    await expect(service.createSale('cashier-1', {
+      branchId: 'branch-1',
+      items: [{ variantId: 'v-1', quantity: '2' }],
+      payments: [{ method: PaymentMethod.BANK_TRANSFER, amount: '50000' }],
+    })).rejects.toMatchObject({ code: 'INVALID_PAYMENT_AMOUNT' })
   })
 
   describe('Idempotency-Key on createSale', () => {
@@ -142,11 +174,12 @@ describe('PosService (POS-001, POS-002, POS-003, MON-001)', () => {
 
     it('passes the claim to the repository on the first attempt', async () => {
       idempotencyRecords.findUnique.mockResolvedValue(null)
+      vi.mocked(pricing.price).mockResolvedValue({ quote: quote('1000'), customer: null })
       vi.mocked(repository.createSale).mockResolvedValue({ id: 'sale-1' } as never)
 
       await service.createSale('cashier-1', saleDto, 'retry-key-0001')
 
-      expect(repository.createSale).toHaveBeenCalledWith('cashier-1', saleDto, {
+      expect(repository.createSale).toHaveBeenCalledWith('cashier-1', expect.anything(), {
         operation: 'pos.sale.create',
         key: 'retry-key-0001',
         requestHash: hashOf(saleDto),
@@ -176,6 +209,7 @@ describe('PosService (POS-001, POS-002, POS-003, MON-001)', () => {
       idempotencyRecords.findUnique
         .mockResolvedValueOnce(null)
         .mockResolvedValueOnce(storedRecord(hashOf(saleDto)))
+      vi.mocked(pricing.price).mockResolvedValue({ quote: quote('1000'), customer: null })
       vi.mocked(repository.createSale).mockRejectedValue(
         new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
           code: 'P2002',

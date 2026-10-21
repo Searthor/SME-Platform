@@ -362,7 +362,25 @@ export type PromotionList = {
   totalPages: number
 }
 
-export type CartEvaluationResult = {
+/** Server-priced cart from POST /pos/quote; the POS displays and charges exactly these amounts. */
+export type PosQuote = {
+  currencyCode: string
+  customer: { id: string; name: string } | null
+  lines: Array<{
+    variantId: string
+    productId: string
+    productName: string
+    variantName: string | null
+    sku: string | null
+    unitName: string
+    quantity: string
+    unitPrice: string
+    subtotal: string
+    discountAmount: string
+    totalAmount: string
+    isPromoGift: boolean
+    promotionId: string | null
+  }>
   appliedPromotions: Array<{
     id: string
     name: string
@@ -371,19 +389,13 @@ export type CartEvaluationResult = {
     discountAmount: string
     description: string
   }>
-  lineDiscounts: Record<string, string>
-  freeGifts: Array<{
-    promotionId: string
-    promotionName: string
-    variantId: string
-    productId?: string
-    unitId?: string
-    quantity: string
-    unitPrice: string
-    discountAmount: string
-  }>
-  billDiscount: string
-  totalDiscount: string
+  subtotal: string
+  lineDiscountTotal: string
+  billPromotionDiscount: string
+  manualDiscount: string
+  discountAmount: string
+  taxAmount: string
+  grandTotal: string
 }
 
 

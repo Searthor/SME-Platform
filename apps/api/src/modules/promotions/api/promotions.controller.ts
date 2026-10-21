@@ -5,7 +5,6 @@ import { RequirePermissions } from '../../access-control/api/require-permissions
 import { PromotionsService } from '../application/promotions.service'
 import {
   CreatePromotionDto,
-  EvaluatePromotionDto,
   PromotionQueryDto,
   UpdatePromotionDto,
 } from './dto/promotion.dto'
@@ -30,12 +29,6 @@ export class PromotionsController {
     @Query('customerGroupId') customerGroupId?: string,
   ) {
     return this.promotions.getActivePromotions(branchId, customerGroupId)
-  }
-
-  @Post('evaluate')
-  @RequirePermissions('sale.view')
-  evaluate(@Body() dto: EvaluatePromotionDto) {
-    return this.promotions.evaluateCart(dto)
   }
 
   @Get(':id')

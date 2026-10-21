@@ -8,6 +8,7 @@ export const permissionDefinitions = [
   { code: 'product.delete', description: 'Archive products', module: 'catalog' },
   { code: 'sale.view', description: 'View sales', module: 'sales' },
   { code: 'sale.create', description: 'Create sales', module: 'sales' },
+  { code: 'sale.discount', description: 'Give manual discounts on sales', module: 'sales' },
   { code: 'sale.cancel', description: 'Cancel sales', module: 'sales' },
   { code: 'sale.refund', description: 'Refund sales', module: 'sales' },
   { code: 'stock.view', description: 'View stock', module: 'inventory' },
@@ -38,7 +39,7 @@ export type PermissionCode = typeof permissionDefinitions[number]['code']
 
 const managerPermissions: readonly PermissionCode[] = [
   'business.manage', 'branch.view', 'branch.manage', 'product.view', 'product.create',
-  'product.update', 'sale.view', 'sale.create', 'sale.cancel', 'stock.view', 'stock.adjust',
+  'product.update', 'sale.view', 'sale.create', 'sale.discount', 'sale.cancel', 'stock.view', 'stock.adjust',
   'stock.transfer', 'purchase.view', 'purchase.create', 'purchase.receive', 'supplier.view',
   'supplier.manage', 'customer.view', 'customer.manage', 'expense.view', 'expense.create',
   'report.sales', 'report.inventory', 'user.view', 'user.manage', 'role.view', 'audit.view',

@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer'
-import { ArrayMinSize, IsArray, IsBoolean, IsEnum, IsInt, IsNotEmpty, IsNumberString, IsOptional, IsString, IsUUID, MaxLength, Min, ValidateNested } from 'class-validator'
+import { ArrayMinSize, IsArray, IsEnum, IsInt, IsNotEmpty, IsNumberString, IsOptional, IsString, IsUUID, MaxLength, Min, ValidateNested } from 'class-validator'
 import { CashMovementType, PaymentMethod } from '@prisma/client'
 
 export class OpenSessionDto {
@@ -45,6 +45,7 @@ export class CashMovementDto {
   reason!: string
 }
 
+/** Client intent only (MON-003): no prices, discounts or gift lines; the server resolves them. */
 export class SaleItemInputDto {
   @IsUUID()
   variantId!: string
@@ -52,22 +53,21 @@ export class SaleItemInputDto {
   @IsNumberString()
   @IsNotEmpty()
   quantity!: string
+}
+
+export enum ManualDiscountType {
+  AMOUNT = 'AMOUNT',
+  PERCENT = 'PERCENT',
+}
+
+/** Requires the sale.discount permission; applied to the bill after promotions. */
+export class ManualDiscountDto {
+  @IsEnum(ManualDiscountType)
+  type!: ManualDiscountType
 
   @IsNumberString()
-  @IsOptional()
-  unitPrice?: string
-
-  @IsNumberString()
-  @IsOptional()
-  discountAmount?: string
-
-  @IsUUID()
-  @IsOptional()
-  promotionId?: string
-
-  @IsBoolean()
-  @IsOptional()
-  isPromoGift?: boolean
+  @IsNotEmpty()
+  value!: string
 }
 
 export class SalePaymentInputDto {
@@ -88,17 +88,9 @@ export class SalePaymentInputDto {
   reference?: string
 }
 
-export class CreateSaleDto {
+export class QuoteSaleDto {
   @IsUUID()
   branchId!: string
-
-  @IsUUID()
-  @IsOptional()
-  warehouseId?: string
-
-  @IsUUID()
-  @IsOptional()
-  posSessionId?: string
 
   @IsUUID()
   @IsOptional()
@@ -108,29 +100,41 @@ export class CreateSaleDto {
   @IsOptional()
   priceGroupId?: string
 
-  @IsString()
+  @ValidateNested()
+  @Type(() => ManualDiscountDto)
   @IsOptional()
-  @MaxLength(160)
-  customerName?: string
-
-  @IsNumberString()
-  @IsOptional()
-  discountAmount?: string
-
-  @IsString()
-  @IsOptional()
-  @MaxLength(500)
-  notes?: string
-
-  @IsUUID()
-  @IsOptional()
-  promotionId?: string
+  manualDiscount?: ManualDiscountDto
 
   @IsArray()
   @ArrayMinSize(1)
   @ValidateNested({ each: true })
   @Type(() => SaleItemInputDto)
   items!: SaleItemInputDto[]
+}
+
+export class CreateSaleDto extends QuoteSaleDto {
+  @IsUUID()
+  @IsOptional()
+  warehouseId?: string
+
+  @IsUUID()
+  @IsOptional()
+  posSessionId?: string
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(160)
+  customerName?: string
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(500)
+  notes?: string
+
+  /** The total the cashier saw; if the server total differs the sale is refused with SALE_TOTAL_CHANGED. */
+  @IsNumberString()
+  @IsOptional()
+  expectedGrandTotal?: string
 
   @IsArray()
   @ValidateNested({ each: true })

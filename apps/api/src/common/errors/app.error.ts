@@ -55,6 +55,10 @@ export const errors = {
   insufficientStock: (msg?: string) => new AppError('INSUFFICIENT_STOCK', msg || 'Insufficient stock for this product', 422),
   invalidSaleItems: (msg?: string) => new AppError('INVALID_SALE_ITEMS', msg || 'Sale must contain at least one item', 422),
   badRequest: (msg: string) => new AppError('BAD_REQUEST', msg, 400),
+  invalidDiscount: (msg: string) => new AppError('INVALID_DISCOUNT', msg, 422),
+  discountPermissionRequired: () => new AppError('DISCOUNT_PERMISSION_REQUIRED', 'You do not have permission to give a manual discount', 403),
+  saleTotalChanged: (grandTotal: string) =>
+    new AppError('SALE_TOTAL_CHANGED', 'Prices or promotions changed; review the new total before charging', 409, { grandTotal }),
   invalidIdempotencyKey: () => new AppError('INVALID_IDEMPOTENCY_KEY', 'Idempotency-Key must be 8-100 characters of letters, digits, "_", "-" or ":"', 400),
   idempotencyKeyReused: () => new AppError('IDEMPOTENCY_KEY_REUSED', 'Idempotency-Key was already used for a different request', 409),
   conflict: (msg: string) => new AppError('CONFLICT', msg, 409),

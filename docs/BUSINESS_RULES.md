@@ -45,6 +45,15 @@ This document is the normative source of truth for cross-cutting and domain inva
 - **MON-005** Historical lines MUST retain pricing, tax, product label/SKU/unit and cost snapshots needed for audit/reporting.
 - **MON-006** A posted financial amount MUST NOT be edited in place. Correction uses a reversal/credit/refund and a new posting where necessary.
 
+Current POS pricing policy (until the tax/rounding ADR replaces it; implemented in `common/money/money.ts` and `modules/pos/domain/sale-pricing.ts`):
+
+- Rounding is half-up to the currency minor unit (LAK/VND/KRW/JPY: 0 decimals, others: 2). Unit prices, line discounts, bill discounts and the manual discount are each rounded before totals are summed, so `grandTotal = subtotal − discountAmount` holds exactly.
+- Unit price: customer/price-group fixed price, else group percentage off the selling price, else the selling price.
+- Discount order: line promotions (clamped to the line) → bill promotions (clamped to the remaining amount) → manual bill discount (amount or percent of what remains; never above it).
+- Manual discounts require the `sale.discount` permission (Owner and Manager by default).
+- Tax is 0 and the POS has no delivery fee; both stay out until the tax ADR / a delivery policy exists.
+- Promotion branch/customer-group scopes are exclusive (a group-scoped promotion never applies to walk-in customers); weekday and time windows use the business timezone.
+
 ## 5. Sales rules
 
 - **SAL-001** A sale MUST contain at least one item and every quantity MUST be positive.

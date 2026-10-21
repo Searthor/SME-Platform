@@ -242,38 +242,21 @@ export class PromotionsRepository {
     return { id, deleted: true }
   }
 
-  async getActivePromotions(now = new Date(), branchId?: string, customerGroupId?: string) {
+  /** Active promotions whose date range covers `at`; scope/weekday/time checks are done by the engine. */
+  async findActiveAt(at: Date) {
     const { businessId } = this.tenantContext.require()
-
-    const promos = await this.prisma.promotion.findMany({
-      where: {
-        businessId,
-        active: true,
-        startDate: { lte: now },
-        endDate: { gte: now },
-      },
-      include: {
-        items: true,
-      },
+    return this.prisma.promotion.findMany({
+      where: { businessId, active: true, startDate: { lte: at }, endDate: { gte: at } },
+      include: { items: true },
       orderBy: [{ minQuantity: 'desc' }, { discountValue: 'desc' }],
     })
+  }
 
-    // Filter by branch, customerGroup, daysOfWeek, and happy hour time
-    const dayOfWeek = String(now.getDay()) // 0=Sun, 1=Mon, ..., 6=Sat
-    const currentTimeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
-
-    return promos.filter(p => {
-      if (p.branchScope && branchId && p.branchScope !== branchId) return false
-      if (p.customerGroupScope && customerGroupId && p.customerGroupScope !== customerGroupId) return false
-      if (p.daysOfWeek) {
-        const allowedDays = p.daysOfWeek.split(',').map(d => d.trim())
-        if (!allowedDays.includes(dayOfWeek)) return false
-      }
-      if (p.startTime && p.endTime) {
-        if (currentTimeStr < p.startTime || currentTimeStr > p.endTime) return false
-      }
-      return true
-    })
+  async businessTimeZone(): Promise<string> {
+    const { businessId } = this.tenantContext.require()
+    const business = await this.prisma.business.findUnique({ where: { id: businessId }, select: { timezone: true } })
+    if (!business) throw errors.resourceNotFound('Business')
+    return business.timezone
   }
 
   private mapPromotion(p: Promotion & { items?: PromotionItem[] }) {

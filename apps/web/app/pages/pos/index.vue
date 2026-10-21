@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { errorMessage } from '~/utils/errors'
-import type { CartEvaluationResult, Customer, CustomerGroup, CustomerList, PosSale, PosSessionSummary } from '~/types/api'
+import type { Customer, CustomerGroup, CustomerList, PosQuote, PosSale, PosSessionSummary } from '~/types/api'
 import { formatMoney } from '~/utils/money'
 import { ApiClientError } from '~/services/api-client'
 
@@ -9,6 +9,7 @@ useHead({
 })
 
 const api = useApiClient()
+const auth = useAuthStore()
 const toast = useToast()
 
 // Types
@@ -55,16 +56,21 @@ type CartItem = {
   unitId?: string
   unitName: string
   categoryId?: string
+  /** Catalog price, shown only until the server quote arrives. */
   basePrice: number
-  sellingPrice: number
   quantity: number
-  discountAmount: number
   availableStock: number
   trackStock: boolean
   imageUrl: string
-  isPromoGift?: boolean
-  promotionId?: string
-  groupPrices?: Array<{ customerGroupId: string; price: string }>
+}
+
+/** A cart row as displayed: prices come from the server quote. */
+type CartDisplayLine = CartItem & {
+  key: string
+  unitPrice: number
+  lineSubtotal: number
+  lineDiscount: number
+  isPromoGift: boolean
 }
 
 type HeldOrder = {
@@ -122,13 +128,10 @@ const savingQuickCustomer = ref(false)
 const selectedTable = ref('T01')
 const orderNotes = ref('')
 
-// Discount, Delivery, VAT
+// Manual bill discount (requires sale.discount; validated and applied by the server)
+const canDiscount = computed(() => auth.hasPermission('sale.discount'))
 const discountType = ref<'AMOUNT' | 'PERCENT'>('AMOUNT')
 const discountValue = ref<number>(0)
-
-const deliveryFee = ref<number>(0)
-
-const applyVat = ref(false)
 
 // Checkout Modal
 const checkoutModal = ref(false)
@@ -254,115 +257,102 @@ const filteredProducts = computed(() => {
 
 const selectedPriceGroupId = ref<string>('')
 
-// Promotion Evaluation State
-const activePromoResult = ref<CartEvaluationResult | null>(null)
-const evaluatingPromo = ref(false)
+// Server quote: the single source of prices, promotions, discounts and totals (MON-003)
+const saleQuote = ref<PosQuote | null>(null)
+const quotedKey = ref('')
+const quoting = ref(false)
+const quoteError = ref('')
 
-// Financial Calculations
-const cartSubtotal = computed(() => {
-  return cart.value.reduce((sum, item) => {
-    return sum + (item.sellingPrice * item.quantity)
-  }, 0)
-})
+const manualDiscountRequest = computed(() =>
+  canDiscount.value && discountValue.value > 0
+    ? { type: discountType.value, value: String(discountValue.value) }
+    : undefined,
+)
 
-const promoDiscount = computed(() => {
-  if (!activePromoResult.value) return 0
-  return Math.round(Number(activePromoResult.value.totalDiscount) || 0)
-})
+const quoteRequest = computed(() => ({
+  branchId: selectedBranchId.value,
+  customerId: selectedCustomer.value?.id || undefined,
+  priceGroupId: selectedPriceGroupId.value || undefined,
+  manualDiscount: manualDiscountRequest.value,
+  items: cart.value.map(i => ({ variantId: i.variantId, quantity: String(i.quantity) })),
+}))
+const quoteKey = computed(() => JSON.stringify(quoteRequest.value))
+const quoteReady = computed(() => cart.value.length > 0 && !quoting.value && !quoteError.value && quotedKey.value === quoteKey.value)
 
-const computedDiscount = computed(() => {
-  let manual = 0
-  if (discountType.value === 'PERCENT') {
-    manual = Math.round((cartSubtotal.value * (discountValue.value || 0)) / 100)
-  } else {
-    manual = discountValue.value || 0
-  }
-  return manual + promoDiscount.value
-})
-
-const computedVat = computed(() => {
-  if (!applyVat.value) return 0
-  const taxable = Math.max(0, cartSubtotal.value - computedDiscount.value)
-  return Math.round(taxable * 0.1) // 10% VAT
-})
-
-const cartGrandTotal = computed(() => {
-  const base = Math.max(0, cartSubtotal.value - computedDiscount.value)
-  return base + computedVat.value + (deliveryFee.value || 0)
-})
-
-const evaluatePromotions = async () => {
-  const nonGiftItems = cart.value.filter(i => !i.isPromoGift)
-  if (nonGiftItems.length === 0) {
-    activePromoResult.value = null
-    cart.value = cart.value.filter(i => !i.isPromoGift)
+const fetchQuote = async () => {
+  if (cart.value.length === 0 || !selectedBranchId.value) {
+    saleQuote.value = null
+    quotedKey.value = ''
+    quoteError.value = ''
     return
   }
-
-  evaluatingPromo.value = true
+  const key = quoteKey.value
+  quoting.value = true
   try {
-    const res = await api.post<CartEvaluationResult>('/promotions/evaluate', {
-      branchId: selectedBranchId.value || undefined,
-      customerGroupId: selectedPriceGroupId.value || selectedCustomer.value?.groupId || undefined,
-      items: nonGiftItems.map(i => ({
-        variantId: i.variantId,
-        productId: i.productId || undefined,
-        unitId: i.unitId || undefined,
-        categoryId: i.categoryId || undefined,
-        quantity: String(i.quantity),
-        unitPrice: String(i.sellingPrice),
-      })),
-    })
-
-    activePromoResult.value = res
-
-    // Synchronize Free Gifts
-    const cleanItems = cart.value.filter(i => !i.isPromoGift)
-    if (res.freeGifts && res.freeGifts.length > 0) {
-      for (const gift of res.freeGifts) {
-        const pInfo = products.value.find(p => p.variantId === gift.variantId)
-        cleanItems.push({
-          variantId: gift.variantId,
-          productId: gift.productId || pInfo?.productId || '',
-          productName: (pInfo?.productName || 'ສິນຄ້າແຖມ') + ' [ແຖມ]',
-          variantName: pInfo?.variantName || '',
-          unitId: gift.unitId || pInfo?.unitId,
-          unitName: pInfo?.unitName || 'ອັນ',
-          categoryId: pInfo?.categoryId,
-          basePrice: Number(gift.unitPrice) || 0,
-          sellingPrice: 0,
-          quantity: Number(gift.quantity) || 1,
-          discountAmount: 0,
-          availableStock: Number(pInfo?.availableStock || 999),
-          trackStock: pInfo?.trackStock ?? false,
-          imageUrl: pInfo?.imageUrl || getProductImage(pInfo?.productName || 'ສິນຄ້າແຖມ', 'ທົ່ວໄປ'),
-          isPromoGift: true,
-          promotionId: gift.promotionId,
-        })
-      }
-    }
-    cart.value = cleanItems
+    const quote = await api.post<PosQuote>('/pos/quote', quoteRequest.value)
+    if (key !== quoteKey.value) return // cart changed meanwhile; a newer request is on its way
+    saleQuote.value = quote
+    quotedKey.value = key
+    quoteError.value = ''
   } catch (err) {
-    console.warn('Failed to evaluate promotions', err)
+    if (key === quoteKey.value) quoteError.value = errorMessage(err, 'ບໍ່ສາມາດຄິດໄລ່ລາຄາໄດ້')
   } finally {
-    evaluatingPromo.value = false
+    if (key === quoteKey.value) quoting.value = false
   }
 }
 
-// Watcher on non-gift items in cart & price group / customer
-const nonGiftCartKey = computed(() => {
-  return cart.value
-    .filter(i => !i.isPromoGift)
-    .map(i => `${i.variantId}:${i.quantity}:${i.sellingPrice}`)
-    .join('|')
+let quoteTimer: ReturnType<typeof setTimeout> | null = null
+watch(quoteKey, () => {
+  if (quoteTimer) clearTimeout(quoteTimer)
+  quoteTimer = setTimeout(fetchQuote, 250)
 })
 
-let promoTimer: ReturnType<typeof setTimeout> | null = null
-watch([nonGiftCartKey, selectedPriceGroupId, () => selectedCustomer.value?.id], () => {
-  if (promoTimer) clearTimeout(promoTimer)
-  promoTimer = setTimeout(() => {
-    evaluatePromotions()
-  }, 250)
+const quoteLineFor = (variantId: string) =>
+  saleQuote.value?.lines.find(line => line.variantId === variantId && !line.isPromoGift)
+
+const cartDisplayLines = computed<CartDisplayLine[]>(() => {
+  const lines: CartDisplayLine[] = cart.value.map((item) => {
+    const quoted = quoteLineFor(item.variantId)
+    return {
+      ...item,
+      key: item.variantId,
+      unitPrice: quoted ? Number(quoted.unitPrice) : item.basePrice,
+      lineSubtotal: quoted ? Number(quoted.subtotal) : item.basePrice * item.quantity,
+      lineDiscount: quoted ? Number(quoted.discountAmount) : 0,
+      isPromoGift: false,
+    }
+  })
+  for (const gift of saleQuote.value?.lines.filter(line => line.isPromoGift) ?? []) {
+    const pInfo = products.value.find(p => p.variantId === gift.variantId)
+    lines.push({
+      key: `gift-${gift.promotionId}-${gift.variantId}`,
+      variantId: gift.variantId,
+      productId: gift.productId,
+      productName: gift.productName,
+      variantName: gift.variantName ?? '',
+      unitName: gift.unitName,
+      basePrice: 0,
+      quantity: Number(gift.quantity),
+      availableStock: Number(pInfo?.availableStock ?? 0),
+      trackStock: pInfo?.trackStock ?? false,
+      imageUrl: pInfo?.imageUrl || getProductImage(gift.productName, pInfo?.categoryName ?? 'ທົ່ວໄປ'),
+      unitPrice: 0,
+      lineSubtotal: 0,
+      lineDiscount: 0,
+      isPromoGift: true,
+    })
+  }
+  return lines
+})
+
+// Display-only numbers; the amounts sent to the API are the quote's decimal strings
+const cartSubtotal = computed(() =>
+  saleQuote.value ? Number(saleQuote.value.subtotal) : cart.value.reduce((sum, item) => sum + item.basePrice * item.quantity, 0))
+const computedDiscount = computed(() => (saleQuote.value ? Number(saleQuote.value.discountAmount) : 0))
+const cartGrandTotal = computed(() => (saleQuote.value ? Number(saleQuote.value.grandTotal) : cartSubtotal.value))
+
+watch(cartGrandTotal, (total) => {
+  if (checkoutModal.value && paymentMethod.value === 'CASH') tenderedAmount.value = formatMoney(total)
 })
 
 const cartItemCount = computed(() => {
@@ -382,43 +372,9 @@ const closingCashDifference = computed(() => {
   return counted - expected
 })
 
-const resolveItemPrice = (
-  basePrice: number,
-  groupPrices?: Array<{ customerGroupId: string; price: string }>,
-  customer?: Customer | null,
-  activePriceGroupId?: string,
-): number => {
-  const targetGroupId = activePriceGroupId || customer?.groupId
-  if (!targetGroupId) return basePrice
-
-  // 1. Check fixed group price
-  const gp = groupPrices?.find(g => g.customerGroupId === targetGroupId)
-  if (gp && Number(gp.price) > 0) {
-    return Math.round(Number(gp.price))
-  }
-
-  // 2. Check group percentage discount
-  const discountPercent = customer?.group?.discountPercent || 0
-  if (discountPercent > 0) {
-    return Math.max(0, Math.round(basePrice * (1 - discountPercent / 100)))
-  }
-
-  return basePrice
-}
-
-const onPriceGroupChange = () => {
-  cart.value.forEach((item) => {
-    item.sellingPrice = resolveItemPrice(item.basePrice, item.groupPrices, selectedCustomer.value, selectedPriceGroupId.value)
-  })
-}
-
 const selectCustomer = (c: Customer | null) => {
   selectedCustomer.value = c
   customerName.value = c ? c.name : 'ລູກຄ້າທົ່ວໄປ'
-  // Recalculate sellingPrice for all items currently in cart
-  cart.value.forEach((item) => {
-    item.sellingPrice = resolveItemPrice(item.basePrice, item.groupPrices, c, selectedPriceGroupId.value)
-  })
   customerSearchModal.value = false
 }
 
@@ -575,7 +531,6 @@ const addToCart = (product: PosProductVariant) => {
   }
 
   const basePrice = Number(product.sellingPrice) || 0
-  const activePrice = resolveItemPrice(basePrice, product.groupPrices, selectedCustomer.value, selectedPriceGroupId.value)
 
   if (existing) {
     existing.quantity += 1
@@ -589,21 +544,20 @@ const addToCart = (product: PosProductVariant) => {
       unitName: product.unitName,
       categoryId: product.categoryId,
       basePrice,
-      sellingPrice: activePrice,
       quantity: 1,
-      discountAmount: 0,
       availableStock: stock,
       trackStock: product.trackStock,
       imageUrl: product.imageUrl || getProductImage(product.productName, product.categoryName),
-      groupPrices: product.groupPrices,
     })
   }
 }
 
-const updateItemQuantity = (item: CartItem, delta: number) => {
+const updateItemQuantity = (line: CartDisplayLine, delta: number) => {
+  const item = cart.value.find(i => i.variantId === line.variantId)
+  if (!item) return
   const newQty = item.quantity + delta
   if (newQty <= 0) {
-    removeItem(item)
+    removeItem(line)
     return
   }
   if (item.trackStock && newQty > item.availableStock) {
@@ -613,14 +567,14 @@ const updateItemQuantity = (item: CartItem, delta: number) => {
   item.quantity = newQty
 }
 
-const removeItem = (item: CartItem) => {
-  cart.value = cart.value.filter(i => i.variantId !== item.variantId)
+const removeItem = (line: CartDisplayLine) => {
+  if (line.isPromoGift) return
+  cart.value = cart.value.filter(i => i.variantId !== line.variantId)
 }
 
 const clearCart = () => {
   cart.value = []
   discountValue.value = 0
-  deliveryFee.value = 0
   orderNotes.value = ''
   selectedCustomer.value = null
   customerName.value = 'ລູກຄ້າທົ່ວໄປ'
@@ -650,29 +604,11 @@ const restoreHeldOrder = (order: HeldOrder) => {
 
 const setDiscountType = (type: 'AMOUNT' | 'PERCENT') => {
   discountType.value = type
-  if (paymentMethod.value === 'CASH') {
-    nextTick(() => {
-      tenderedAmount.value = formatMoney(cartGrandTotal.value)
-    })
-  }
 }
 
 const applyQuickDiscount = (pct: number) => {
   discountType.value = 'PERCENT'
   discountValue.value = pct
-  if (paymentMethod.value === 'CASH') {
-    nextTick(() => {
-      tenderedAmount.value = formatMoney(cartGrandTotal.value)
-    })
-  }
-}
-
-const onDiscountInput = () => {
-  if (paymentMethod.value === 'CASH') {
-    nextTick(() => {
-      tenderedAmount.value = formatMoney(cartGrandTotal.value)
-    })
-  }
 }
 
 const openCheckout = (method?: 'CASH' | 'BANK_TRANSFER' | 'CARD' | 'OTHER') => {
@@ -701,8 +637,16 @@ const handleCompleteSale = async () => {
     return
   }
 
-  const tendered = Number(tenderedAmount.value.replace(/,/g, '')) || cartGrandTotal.value
-  if (paymentMethod.value === 'CASH' && tendered < cartGrandTotal.value) {
+  // Charge only what the server has priced for exactly this cart
+  if (!quoteReady.value) await fetchQuote()
+  const quote = saleQuote.value
+  if (!quote || !quoteReady.value) {
+    toast.error('ຜິດພາດ', quoteError.value || 'ກຳລັງຄິດໄລ່ລາຄາ ກະລຸນາລອງໃໝ່')
+    return
+  }
+
+  const tenderedInput = tenderedAmount.value.replace(/,/g, '').trim() || quote.grandTotal
+  if (paymentMethod.value === 'CASH' && Number(tenderedInput) < Number(quote.grandTotal)) {
     toast.error('ຍອດເງິນບໍ່ພໍ', 'ຈຳນວນເງິນສົດທີ່ຮັບມາໜ້ອຍກວ່າຍອດລວມທີ່ຕ້ອງຊຳລະ')
     return
   }
@@ -711,32 +655,23 @@ const handleCompleteSale = async () => {
   try {
     const mappedMethod = paymentMethod.value === 'CARD' ? 'OTHER' : paymentMethod.value
 
+    // Intent only: the server re-prices the cart and refuses the sale if its total differs
     const payload = {
-      branchId: selectedBranchId.value,
+      ...quoteRequest.value,
       posSessionId: activeSession.value.id,
-      customerId: selectedCustomer.value?.id || undefined,
-      priceGroupId: selectedPriceGroupId.value || undefined,
-      promotionId: activePromoResult.value?.appliedPromotions[0]?.id || undefined,
       customerName: selectedCustomer.value
         ? selectedCustomer.value.name
         : (customerName.value.trim() ? `${customerName.value.trim()} (ໂຕະ: ${selectedTable.value})` : undefined),
-      discountAmount: computedDiscount.value > 0 ? String(computedDiscount.value) : undefined,
       notes: orderNotes.value.trim() || undefined,
-      items: cart.value.map(i => ({
-        variantId: i.variantId,
-        quantity: String(i.quantity),
-        unitPrice: String(i.sellingPrice),
-        promotionId: i.promotionId || undefined,
-        isPromoGift: i.isPromoGift || undefined,
-      })),
-      payments: [
-        {
-          method: mappedMethod,
-          amount: String(cartGrandTotal.value),
-          tenderedAmount: paymentMethod.value === 'CASH' ? String(tendered) : undefined,
-          reference: paymentReference.value?.trim() || undefined,
-        },
-      ],
+      expectedGrandTotal: quote.grandTotal,
+      payments: Number(quote.grandTotal) > 0
+        ? [{
+            method: mappedMethod,
+            amount: quote.grandTotal,
+            tenderedAmount: paymentMethod.value === 'CASH' ? tenderedInput : undefined,
+            reference: paymentReference.value?.trim() || undefined,
+          }]
+        : [],
     }
 
     pendingSaleKey ??= crypto.randomUUID()
@@ -751,6 +686,11 @@ const handleCompleteSale = async () => {
     clearCart()
   } catch (err) {
     if (!isOutcomeUnknown(err)) pendingSaleKey = null
+    if (err instanceof ApiClientError && err.code === 'SALE_TOTAL_CHANGED') {
+      await fetchQuote()
+      toast.warning('ລາຄາມີການປ່ຽນແປງ', 'ກະລຸນາກວດຍອດໃໝ່ກ່ອນຮັບເງິນ')
+      return
+    }
     toast.error('ຜິດພາດ', errorMessage(err, 'ບໍ່ສາມາດບັນທຶກການຂາຍໄດ້'))
   } finally {
     completingSale.value = false
@@ -1182,7 +1122,6 @@ onUnmounted(() => {
               <select
                 v-model="selectedPriceGroupId"
                 class="bg-transparent font-black text-slate-900 focus:outline-none text-xs cursor-pointer"
-                @change="onPriceGroupChange"
               >
                 <option value="">ລາຄາໜ້າຮ້ານ (Default)</option>
                 <option
@@ -1266,8 +1205,8 @@ onUnmounted(() => {
 
             <!-- Item rows -->
             <div
-              v-for="item in cart"
-              :key="item.variantId"
+              v-for="item in cartDisplayLines"
+              :key="item.key"
               class="flex items-center justify-between gap-2.5 p-1.5 rounded-xl hover:bg-slate-50 transition"
             >
               <!-- Square Image -->
@@ -1290,16 +1229,16 @@ onUnmounted(() => {
                 </div>
                 <div class="flex items-center gap-1.5 mt-0.5">
                   <p class="text-[0.68rem] font-black" :class="item.isPromoGift ? 'text-emerald-600' : 'text-slate-800'">
-                    {{ item.isPromoGift ? '₭ 0' : `₭ ${formatMoney(item.sellingPrice)}` }}
+                    {{ item.isPromoGift ? '₭ 0' : `₭ ${formatMoney(item.unitPrice)}` }}
                   </p>
-                  <span v-if="item.sellingPrice < item.basePrice && !item.isPromoGift" class="text-[0.6rem] text-slate-400 line-through font-medium">
+                  <span v-if="item.unitPrice < item.basePrice && !item.isPromoGift" class="text-[0.6rem] text-slate-400 line-through font-medium">
                     ₭ {{ formatMoney(item.basePrice) }}
                   </span>
                   <span
-                    v-if="activePromoResult && activePromoResult.lineDiscounts[item.variantId]"
+                    v-if="item.lineDiscount > 0"
                     class="rounded bg-rose-50 px-1 text-[0.62rem] font-bold text-rose-600"
                   >
-                    -₭ {{ formatMoney(activePromoResult.lineDiscounts[item.variantId]) }}
+                    -₭ {{ formatMoney(item.lineDiscount) }}
                   </span>
                 </div>
               </div>
@@ -1331,7 +1270,7 @@ onUnmounted(() => {
               <!-- Line Total -->
               <div class="w-16 text-right shrink-0">
                 <span class="text-xs font-black" :class="item.isPromoGift ? 'text-emerald-600' : 'text-slate-900'">
-                  {{ item.isPromoGift ? 'ຟຣີ' : `₭ ${formatMoney(item.sellingPrice * item.quantity)}` }}
+                  {{ item.isPromoGift ? 'ຟຣີ' : `₭ ${formatMoney(item.lineSubtotal)}` }}
                 </span>
               </div>
 
@@ -1367,9 +1306,9 @@ onUnmounted(() => {
           </div>
 
           <!-- Applied Promotions Ribbons -->
-          <div v-if="activePromoResult && activePromoResult.appliedPromotions.length > 0" class="space-y-1.5 pt-0.5">
+          <div v-if="saleQuote && saleQuote.appliedPromotions.length > 0" class="space-y-1.5 pt-0.5">
             <div
-              v-for="ap in activePromoResult.appliedPromotions"
+              v-for="ap in saleQuote.appliedPromotions"
               :key="ap.id"
               class="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[0.7rem] text-emerald-800"
             >
@@ -1392,17 +1331,9 @@ onUnmounted(() => {
             <span>-₭ {{ formatMoney(computedDiscount) }}</span>
           </div>
 
-          <!-- VAT (10%) (if applied) -->
-          <div v-if="applyVat && computedVat > 0" class="flex justify-between text-xs text-slate-600">
-            <span>ພາສີ (10%):</span>
-            <span class="font-bold text-slate-900">₭ {{ formatMoney(computedVat) }}</span>
-          </div>
-
-          <!-- Delivery Fee (if any) -->
-          <div v-if="deliveryFee > 0" class="flex justify-between text-xs text-slate-600">
-            <span>ຄ່າຈັດສົ່ງ:</span>
-            <span class="font-bold text-slate-900">₭ {{ formatMoney(deliveryFee) }}</span>
-          </div>
+          <p v-if="quoteError" class="rounded-xl bg-rose-50 px-2.5 py-1.5 text-[0.7rem] font-bold text-rose-600">
+            {{ quoteError }}
+          </p>
 
           <!-- Grand Total Banner (Blue/Purple Box) -->
           <div class="rounded-2xl bg-[#eff2fe] px-3.5 py-2.5 flex items-center justify-between border border-[#d8e0fc]">
@@ -1466,8 +1397,8 @@ onUnmounted(() => {
         <div class="grid grid-cols-1 md:grid-cols-12 gap-6 items-start">
           <!-- LEFT COLUMN: Discounts, Extras, and Order Summary -->
           <div class="md:col-span-5 space-y-4">
-            <!-- Customer Discount & Adjustments Section -->
-            <div class="rounded-2xl border border-slate-200/90 bg-slate-50/80 p-4 space-y-3">
+            <!-- Manual discount: only for members with sale.discount; the server validates it again -->
+            <div v-if="canDiscount" class="rounded-2xl border border-slate-200/90 bg-slate-50/80 p-4 space-y-3">
               <div class="flex items-center justify-between">
                 <span class="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                   <span class="text-sm">🏷️</span>
@@ -1480,7 +1411,6 @@ onUnmounted(() => {
                     min="0"
                     placeholder="0"
                     class="w-28 h-9 rounded-xl border border-slate-200 bg-white px-2.5 text-right text-xs font-black text-slate-900 focus:border-brand-500 focus:outline-none"
-                    @input="onDiscountInput"
                   >
                   <div class="flex rounded-xl border border-slate-200 bg-white p-0.5 text-xs font-bold">
                     <button
@@ -1517,30 +1447,6 @@ onUnmounted(() => {
                   {{ pct === 0 ? 'ບໍ່ຫຼຸດ (0%)' : `${pct}%` }}
                 </button>
               </div>
-
-              <!-- VAT & Delivery Options -->
-              <div class="pt-3 border-t border-slate-200/80 flex items-center justify-between text-xs">
-                <label class="flex items-center gap-2 cursor-pointer select-none">
-                  <input
-                    v-model="applyVat"
-                    type="checkbox"
-                    class="size-4 rounded text-brand-600 focus:ring-0"
-                  >
-                  <span class="font-bold text-slate-700 text-xs">ພາສີ (VAT 10%)</span>
-                </label>
-
-                <div class="flex items-center gap-1.5">
-                  <span class="text-xs text-slate-600 font-bold">🚚 ຄ່າສົ່ງ:</span>
-                  <input
-                    v-model.number="deliveryFee"
-                    type="number"
-                    min="0"
-                    placeholder="0"
-                    class="w-24 h-8 rounded-xl border border-slate-200 bg-white px-2 text-right text-xs font-bold focus:outline-none"
-                  >
-                  <span class="text-[0.7rem] text-slate-400 font-bold">₭</span>
-                </div>
-              </div>
             </div>
 
             <!-- Price Breakdown & Grand Total Banner -->
@@ -1550,9 +1456,9 @@ onUnmounted(() => {
                 <span class="font-bold text-slate-900">₭ {{ formatMoney(cartSubtotal) }}</span>
               </div>
               <!-- Applied Promotions in Checkout -->
-              <div v-if="activePromoResult && activePromoResult.appliedPromotions.length > 0" class="space-y-1.5 py-1">
+              <div v-if="saleQuote && saleQuote.appliedPromotions.length > 0" class="space-y-1.5 py-1">
                 <div
-                  v-for="ap in activePromoResult.appliedPromotions"
+                  v-for="ap in saleQuote.appliedPromotions"
                   :key="ap.id"
                   class="flex items-center justify-between rounded-xl border border-emerald-300 bg-white px-2.5 py-1.5 text-xs text-emerald-800"
                 >
@@ -1567,14 +1473,9 @@ onUnmounted(() => {
                 <span>ສ່ວນຫຼຸດລວມທັງໝົດ:</span>
                 <span>-₭ {{ formatMoney(computedDiscount) }}</span>
               </div>
-              <div v-if="applyVat && computedVat > 0" class="flex justify-between text-xs text-slate-600">
-                <span>ພາສີ (10%):</span>
-                <span class="font-bold text-slate-900">₭ {{ formatMoney(computedVat) }}</span>
-              </div>
-              <div v-if="deliveryFee > 0" class="flex justify-between text-xs text-slate-600">
-                <span>ຄ່າຈັດສົ່ງ:</span>
-                <span class="font-bold text-slate-900">₭ {{ formatMoney(deliveryFee) }}</span>
-              </div>
+              <p v-if="quoteError" class="rounded-xl bg-rose-50 px-2.5 py-1.5 text-xs font-bold text-rose-600">
+                {{ quoteError }}
+              </p>
 
               <div class="pt-2.5 border-t border-[#d8e0fc] flex items-center justify-between">
                 <div>
@@ -1722,10 +1623,11 @@ onUnmounted(() => {
             <button
               type="button"
               class="w-full rounded-2xl bg-[#5b4cf5] hover:bg-[#4d3ee3] h-13 text-sm md:text-base font-black text-white shadow-lg shadow-brand-500/25 transition active:scale-[0.99] disabled:opacity-50 flex items-center justify-center gap-2"
-              :disabled="completingSale"
+              :disabled="completingSale || !quoteReady"
               @click="handleCompleteSale"
             >
               <span v-if="completingSale">ກຳລັງບັນທຶກ...</span>
+              <span v-else-if="!quoteReady">ກຳລັງຄິດໄລ່ລາຄາ...</span>
               <span v-else>✅ ຢືນຢັນການຊຳລະ (₭ {{ formatMoney(cartGrandTotal) }})</span>
             </button>
           </div>

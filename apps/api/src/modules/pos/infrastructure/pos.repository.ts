@@ -5,7 +5,6 @@ import {
   PosSessionStatus,
   Prisma,
   SaleLifecycleStatus,
-  SalePaymentStatus,
   StockMovementType,
 } from '@prisma/client'
 import { errors } from '../../../common/errors/app.error'
@@ -18,10 +17,21 @@ import { StockLedgerRepository } from '../../inventory/infrastructure/stock-ledg
 import type {
   CashMovementDto,
   CloseSessionDto,
-  CreateSaleDto,
   OpenSessionDto,
   SaleListQueryDto,
 } from '../api/dto/pos.dto'
+import type { preparePayments, SaleQuote } from '../domain/sale-pricing'
+
+export type CreateSaleInput = {
+  branchId: string
+  warehouseId?: string | undefined
+  posSessionId?: string | undefined
+  customer: { id: string; name: string } | null
+  customerName?: string | undefined
+  notes?: string | undefined
+  quote: SaleQuote
+  payment: ReturnType<typeof preparePayments>
+}
 
 export interface SessionSummaryReport {
   sessionId: string
@@ -553,14 +563,16 @@ export class PosRepository {
     })
   }
 
-  async createSale(cashierUserId: string, dto: CreateSaleDto, idempotency?: IdempotencyClaim) {
+  /** Persists a sale priced by SalePricingService; this method never computes money itself. */
+  async createSale(cashierUserId: string, input: CreateSaleInput, idempotency?: IdempotencyClaim) {
     const { businessId } = this.tenantContext.require()
+    const { quote, payment } = input
 
-    // 1. Validate session
-    let sessionId = dto.posSessionId
+    // 1. Validate session: must be OPEN and belong to the selling branch
+    let sessionId = input.posSessionId
     if (!sessionId) {
       const activeSession = await this.prisma.posSession.findFirst({
-        where: { businessId, branchId: dto.branchId, status: PosSessionStatus.OPEN },
+        where: { businessId, branchId: input.branchId, status: PosSessionStatus.OPEN },
       })
       if (!activeSession) {
         throw errors.sessionNotOpen()
@@ -568,7 +580,7 @@ export class PosRepository {
       sessionId = activeSession.id
     } else {
       const session = await this.prisma.posSession.findFirst({
-        where: { businessId, id: sessionId },
+        where: { businessId, id: sessionId, branchId: input.branchId },
       })
       if (!session) throw errors.resourceNotFound('POS Session')
       if (session.status !== PosSessionStatus.OPEN) {
@@ -576,178 +588,18 @@ export class PosRepository {
       }
     }
 
-    // 2. Determine warehouse
-    let warehouseId = dto.warehouseId
-    if (!warehouseId) {
-      const defaultWarehouse = await this.prisma.warehouse.findFirst({
-        where: { businessId, branchId: dto.branchId, status: 'ACTIVE' },
-        orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
-      })
-      if (!defaultWarehouse) throw errors.warehouseNotFound()
-      warehouseId = defaultWarehouse.id
-    } else {
-      const wh = await this.prisma.warehouse.findFirst({
-        where: { businessId, id: warehouseId, status: 'ACTIVE' },
-      })
-      if (!wh) throw errors.warehouseNotFound()
-    }
-
-    // 3. Validate items
-    if (!dto.items || dto.items.length === 0) {
-      throw errors.invalidSaleItems()
-    }
-
-    const variantIds = [...new Set(dto.items.map(i => i.variantId))]
-    const variants = await this.prisma.productVariant.findMany({
-      where: { businessId, id: { in: variantIds } },
-      include: {
-        product: {
-          select: {
-            id: true,
-            name: true,
-            trackStock: true,
-            unit: { select: { id: true, name: true, decimalPlaces: true } },
-          },
-        },
-        groupPrices: {
-          select: { customerGroupId: true, price: true },
-        },
+    // 2. Determine warehouse; it must belong to the selling branch (SAL-003)
+    const warehouse = await this.prisma.warehouse.findFirst({
+      where: {
+        businessId,
+        branchId: input.branchId,
+        status: 'ACTIVE',
+        ...(input.warehouseId ? { id: input.warehouseId } : {}),
       },
+      orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
     })
-
-    const variantMap = new Map(variants.map(v => [v.id, v]))
-    for (const item of dto.items) {
-      if (!variantMap.has(item.variantId)) {
-        throw errors.resourceNotFound(`Variant ${item.variantId}`)
-      }
-    }
-
-    // Resolve Customer and Price Group / Customer Group if specified
-    let targetGroupId: string | null = dto.priceGroupId || null
-    let customer: { id: string; name: string; groupId: string | null; group: { discountPercent: Prisma.Decimal } | null } | null = null
-    if (dto.customerId) {
-      customer = await this.prisma.customer.findFirst({
-        where: { businessId, id: dto.customerId, active: true },
-        select: {
-          id: true,
-          name: true,
-          groupId: true,
-          group: { select: { discountPercent: true } },
-        },
-      })
-      if (!targetGroupId && customer?.groupId) {
-        targetGroupId = customer.groupId
-      }
-    }
-
-    let targetGroup: { discountPercent: Prisma.Decimal } | null = customer?.group ?? null
-    if (targetGroupId && (!targetGroup || targetGroupId !== customer?.groupId)) {
-      const g = await this.prisma.customerGroup.findFirst({
-        where: { businessId, id: targetGroupId, active: true },
-        select: { discountPercent: true },
-      })
-      if (g) targetGroup = g
-    }
-
-    // 4. Calculate Financials strictly using Decimal (MON-001, MON-003)
-    let computedSubtotal = new Prisma.Decimal(0)
-    const totalDiscount = new Prisma.Decimal(dto.discountAmount || '0')
-
-    const preparedItems = dto.items.map(item => {
-      const variant = variantMap.get(item.variantId)!
-      const qty = new Prisma.Decimal(item.quantity)
-      if (qty.lte(0)) {
-        throw errors.invalidSaleItems('Item quantity must be greater than zero')
-      }
-
-      // Determine unit price: check price group / customer group price first, then group discount %, then default price
-      let unitPrice = item.unitPrice ? new Prisma.Decimal(item.unitPrice) : variant.sellingPrice
-      if (targetGroupId) {
-        const gp = variant.groupPrices.find(g => g.customerGroupId === targetGroupId)
-        if (gp) {
-          unitPrice = gp.price
-        } else if (targetGroup && targetGroup.discountPercent.gt(0)) {
-          const discountMultiplier = new Prisma.Decimal(1).sub(targetGroup.discountPercent.div(100))
-          unitPrice = variant.sellingPrice.mul(discountMultiplier)
-        }
-      }
-
-      const lineDiscount = new Prisma.Decimal(item.discountAmount || '0')
-      const lineSubtotal = unitPrice.mul(qty)
-      const lineTotal = lineSubtotal.sub(lineDiscount)
-
-      computedSubtotal = computedSubtotal.add(lineSubtotal)
-
-      return {
-        id: this.ids.generate(),
-        variantId: variant.id,
-        productName: variant.product.name,
-        variantName: variant.name,
-        unitName: variant.product.unit.name,
-        unitCost: variant.cost,
-        unitPrice,
-        quantity: qty,
-        discountAmount: lineDiscount,
-        subtotal: lineSubtotal,
-        taxAmount: new Prisma.Decimal(0),
-        totalAmount: lineTotal,
-        trackStock: variant.product.trackStock,
-        promotionId: item.promotionId || null,
-        isPromoGift: item.isPromoGift || false,
-      }
-    })
-
-    const grandTotal = computedSubtotal.sub(totalDiscount)
-    if (grandTotal.isNegative()) {
-      throw errors.invalidPaymentAmount('Grand total cannot be negative')
-    }
-
-    // Process payments
-    const paymentsInput = dto.payments || []
-    let totalPaid = new Prisma.Decimal(0)
-    let changeAmount = new Prisma.Decimal(0)
-
-    const preparedPayments = paymentsInput.map(p => {
-      const pAmt = new Prisma.Decimal(p.amount)
-      const pTendered = p.tenderedAmount ? new Prisma.Decimal(p.tenderedAmount) : pAmt
-      let pChange = new Prisma.Decimal(0)
-
-      if (p.method === PaymentMethod.CASH && pTendered.gt(pAmt)) {
-        pChange = pTendered.sub(pAmt)
-        changeAmount = changeAmount.add(pChange)
-      }
-
-      totalPaid = totalPaid.add(pAmt)
-
-      return {
-        id: this.ids.generate(),
-        method: p.method,
-        amount: pAmt,
-        tenderedAmount: pTendered,
-        changeAmount: pChange,
-        reference: p.reference?.trim() || null,
-      }
-    })
-
-    // If no payments provided, default to cash paid in full
-    if (preparedPayments.length === 0) {
-      preparedPayments.push({
-        id: this.ids.generate(),
-        method: PaymentMethod.CASH,
-        amount: grandTotal,
-        tenderedAmount: grandTotal,
-        changeAmount: new Prisma.Decimal(0),
-        reference: null,
-      })
-      totalPaid = grandTotal
-    }
-
-    let paymentStatus: SalePaymentStatus = SalePaymentStatus.PAID
-    if (totalPaid.isZero()) {
-      paymentStatus = SalePaymentStatus.UNPAID
-    } else if (totalPaid.lt(grandTotal)) {
-      paymentStatus = SalePaymentStatus.PARTIALLY_PAID
-    }
+    if (!warehouse) throw errors.warehouseNotFound()
+    const warehouseId = warehouse.id
 
     const now = new Date()
     const saleId = this.ids.generate()
@@ -765,33 +617,33 @@ export class PosRepository {
         data: {
           id: saleId,
           businessId,
-          branchId: dto.branchId,
+          branchId: input.branchId,
           warehouseId,
           posSessionId: sessionId,
           saleNumber,
-          customerId: customer?.id ?? dto.customerId ?? null,
-          customerName: customer?.name ?? (dto.customerName?.trim() || null),
-          currencyCode: 'LAK',
-          subtotal: computedSubtotal,
-          discountAmount: totalDiscount,
-          taxAmount: new Prisma.Decimal(0),
-          grandTotal,
-          paidAmount: totalPaid,
-          changeAmount,
+          customerId: input.customer?.id ?? null,
+          customerName: input.customer?.name ?? (input.customerName?.trim() || null),
+          currencyCode: quote.currencyCode,
+          subtotal: quote.subtotal,
+          discountAmount: quote.discountAmount,
+          taxAmount: quote.taxAmount,
+          grandTotal: quote.grandTotal,
+          paidAmount: payment.totalPaid,
+          changeAmount: payment.changeAmount,
           lifecycleStatus: SaleLifecycleStatus.COMPLETED,
-          paymentStatus,
+          paymentStatus: payment.paymentStatus,
           soldAt: now,
           cashierUserId,
-          notes: dto.notes?.trim() || null,
-          promotionId: dto.promotionId || null,
+          notes: input.notes?.trim() || null,
+          promotionId: quote.promotionId,
         },
       })
 
-      // Create Sale Items
-      for (const item of preparedItems) {
+      // Create Sale Items with price/cost/label snapshots (MON-005)
+      for (const item of quote.lines) {
         await tx.saleItem.create({
           data: {
-            id: item.id,
+            id: this.ids.generate(),
             businessId,
             saleId: sale.id,
             variantId: item.variantId,
@@ -803,7 +655,7 @@ export class PosRepository {
             unitPrice: item.unitPrice,
             discountAmount: item.discountAmount,
             subtotal: item.subtotal,
-            taxAmount: item.taxAmount,
+            taxAmount: new Prisma.Decimal(0),
             totalAmount: item.totalAmount,
             promotionId: item.promotionId,
             isPromoGift: item.isPromoGift,
@@ -812,7 +664,7 @@ export class PosRepository {
       }
 
       // Deduct stock in variant order so concurrent sales lock balance rows in the same sequence
-      const stockItems = preparedItems
+      const stockItems = quote.lines
         .filter(item => item.trackStock)
         .sort((a, b) => a.variantId.localeCompare(b.variantId))
       for (const item of stockItems) {
@@ -831,10 +683,10 @@ export class PosRepository {
       }
 
       // Create Payments
-      for (const p of preparedPayments) {
+      for (const p of payment.payments) {
         await tx.salePayment.create({
           data: {
-            id: p.id,
+            id: this.ids.generate(),
             businessId,
             saleId: sale.id,
             method: p.method,
