@@ -3,6 +3,7 @@ import { PaymentAllocationTargetType, PaymentDirection, PaymentMethod, Prisma, P
 import { errors } from '../../../common/errors/app.error'
 import { PrismaService } from '../../../core/database/prisma.service'
 import { DocumentNumberService } from '../../../core/documents/document-number.service'
+import { type IdempotencyClaim, IdempotencyService } from '../../../core/idempotency/idempotency.service'
 import { IdService } from '../../../core/ids/id.service'
 import { TenantContextService } from '../../../core/tenancy/tenant-context.service'
 import { StockLedgerRepository } from '../../inventory/infrastructure/stock-ledger.repository'
@@ -49,7 +50,22 @@ export class PurchasesRepository {
     @Inject(IdService) private readonly ids: IdService,
     @Inject(DocumentNumberService) private readonly documentNumbers: DocumentNumberService,
     @Inject(StockLedgerRepository) private readonly stockLedger: StockLedgerRepository,
+    @Inject(IdempotencyService) private readonly idempotency: IdempotencyService,
   ) {}
+
+  async findGoodsReceipt(receiptId: string) {
+    const { businessId } = this.tenantContext.require()
+    const receipt = await this.prisma.goodsReceipt.findFirst({ where: { businessId, id: receiptId } })
+    if (!receipt) throw errors.resourceNotFound('Goods receipt')
+    return receipt
+  }
+
+  async findPayment(paymentId: string) {
+    const { businessId } = this.tenantContext.require()
+    const payment = await this.prisma.payment.findFirst({ where: { businessId, id: paymentId } })
+    if (!payment) throw errors.resourceNotFound('Payment')
+    return payment
+  }
 
   /** Row-locks the purchase so concurrent receipts/payments serialize on it until commit. */
   private async lockPurchase(tx: Prisma.TransactionClient, businessId: string, purchaseId: string) {
@@ -87,8 +103,7 @@ export class PurchasesRepository {
 
     const where: Prisma.PurchaseWhereInput = {
       businessId,
-      ...(context.branchScope.kind === 'selected' ? { branchId: { in: [...context.branchScope.branchIds] } } : {}),
-      ...(query.branchId ? { branchId: query.branchId } : {}),
+      ...this.tenantContext.branchFilter(query.branchId),
       ...(query.supplierId ? { supplierId: query.supplierId } : {}),
       ...(query.lifecycleStatus ? { lifecycleStatus: query.lifecycleStatus } : {}),
       ...(query.paymentStatus ? { paymentStatus: query.paymentStatus } : {}),
@@ -158,7 +173,7 @@ export class PurchasesRepository {
   async findById(purchaseId: string) {
     const { businessId } = this.tenantContext.require()
     const p = await this.prisma.purchase.findFirst({
-      where: { businessId, id: purchaseId },
+      where: { businessId, id: purchaseId, ...this.tenantContext.branchFilter() },
       include: {
         supplier: {
           select: { id: true, code: true, name: true, contactName: true, phone: true, email: true, address: true, taxId: true },
@@ -308,6 +323,7 @@ export class PurchasesRepository {
     initialReceipt?: InitialReceiptData
   } & AuditInput) {
     const { businessId } = this.tenantContext.require()
+    await this.assertPurchaseReferences(businessId, input)
 
     try {
       return await this.prisma.$transaction(async (tx) => {
@@ -461,18 +477,21 @@ export class PurchasesRepository {
 
   async cancel(input: { purchaseId: string } & AuditInput) {
     const { businessId } = this.tenantContext.require()
-    const purchase = await this.prisma.purchase.findFirst({
-      where: { businessId, id: input.purchaseId },
-      include: { items: true },
-    })
-
-    if (!purchase) throw errors.resourceNotFound('Purchase')
-    if (purchase.lifecycleStatus === 'CANCELLED') throw errors.purchaseCancelled()
-    if (purchase.lifecycleStatus === 'RECEIVED' || purchase.lifecycleStatus === 'PARTIALLY_RECEIVED') {
-      throw errors.purchaseAlreadyReceived()
-    }
 
     return this.prisma.$transaction(async (tx) => {
+      // Lock and re-check inside the transaction so a concurrent receipt cannot be cancelled away
+      await this.lockPurchase(tx, businessId, input.purchaseId)
+      const purchase = await tx.purchase.findFirst({
+        where: { businessId, id: input.purchaseId, ...this.tenantContext.branchFilter() },
+      })
+
+      if (!purchase) throw errors.resourceNotFound('Purchase')
+      if (purchase.lifecycleStatus === 'CANCELLED') throw errors.purchaseCancelled()
+      if (purchase.lifecycleStatus === 'RECEIVED' || purchase.lifecycleStatus === 'PARTIALLY_RECEIVED') {
+        throw errors.purchaseAlreadyReceived()
+      }
+      if (purchase.paidAmount.gt(0)) throw errors.purchasePaid()
+
       const updated = await tx.purchase.update({
         where: { businessId_id: { businessId, id: input.purchaseId } },
         data: { lifecycleStatus: PurchaseLifecycleStatus.CANCELLED },
@@ -496,6 +515,24 @@ export class PurchasesRepository {
     })
   }
 
+  /** Branch in scope, warehouse in that branch, supplier active, variants active (SAL-003 equivalent for purchasing). */
+  private async assertPurchaseReferences(
+    businessId: string,
+    input: { branchId: string; warehouseId: string; supplierId: string; items: ReadonlyArray<{ variantId: string }> },
+  ) {
+    this.tenantContext.assertBranchAccess(input.branchId)
+    const [warehouse, supplier, variantCount] = await Promise.all([
+      this.prisma.warehouse.findFirst({ where: { businessId, id: input.warehouseId, branchId: input.branchId, status: 'ACTIVE' } }),
+      this.prisma.supplier.findFirst({ where: { businessId, id: input.supplierId, status: 'ACTIVE' } }),
+      this.prisma.productVariant.count({
+        where: { businessId, id: { in: [...new Set(input.items.map(item => item.variantId))] }, active: true },
+      }),
+    ])
+    if (!warehouse) throw errors.warehouseNotFound()
+    if (!supplier) throw errors.resourceNotFound('Supplier')
+    if (variantCount !== new Set(input.items.map(item => item.variantId)).size) throw errors.resourceNotFound('Product variant')
+  }
+
   async receiveGoods(input: {
     receiptId: string
     purchaseId: string
@@ -507,14 +544,15 @@ export class PurchasesRepository {
       receivedQuantity: Prisma.Decimal
       stockMovementId: string
     }>
-  } & AuditInput) {
+  } & AuditInput, idempotency?: IdempotencyClaim) {
     const { businessId } = this.tenantContext.require()
 
     return this.prisma.$transaction(async (tx) => {
+      if (idempotency) await this.idempotency.claim(tx, idempotency, input.receiptId)
       // Lock before reading received quantities so two receipts cannot both pass the over-receipt check
       await this.lockPurchase(tx, businessId, input.purchaseId)
       const purchase = await tx.purchase.findFirst({
-        where: { businessId, id: input.purchaseId },
+        where: { businessId, id: input.purchaseId, ...this.tenantContext.branchFilter() },
         include: { items: true },
       })
 
@@ -524,9 +562,9 @@ export class PurchasesRepository {
 
       const warehouseId = input.warehouseId || purchase.warehouseId
 
-      // Validate warehouse exists in this business
+      // The receiving warehouse must belong to the purchase's branch
       const warehouse = await tx.warehouse.findFirst({
-        where: { businessId, id: warehouseId },
+        where: { businessId, id: warehouseId, branchId: purchase.branchId, status: 'ACTIVE' },
       })
       if (!warehouse) throw errors.warehouseNotFound()
 
@@ -638,14 +676,15 @@ export class PurchasesRepository {
     paidAt?: string
     reference?: string
     notes?: string
-  } & AuditInput) {
+  } & AuditInput, idempotency?: IdempotencyClaim) {
     const { businessId } = this.tenantContext.require()
 
     return this.prisma.$transaction(async (tx) => {
+      if (idempotency) await this.idempotency.claim(tx, idempotency, input.paymentId)
       // Lock so concurrent payments cannot both pass the remaining-debt check
       await this.lockPurchase(tx, businessId, input.purchaseId)
       const purchase = await tx.purchase.findFirst({
-        where: { businessId, id: input.purchaseId },
+        where: { businessId, id: input.purchaseId, ...this.tenantContext.branchFilter() },
       })
 
       if (!purchase) throw errors.resourceNotFound('Purchase')

@@ -10,6 +10,7 @@ import {
   PromotionRewardType,
   UpdatePromotionDto,
 } from '../api/dto/promotion.dto'
+import { assertValidPromotionRule } from '../domain/promotion-rules'
 
 @Injectable()
 export class PromotionsRepository {
@@ -18,6 +19,61 @@ export class PromotionsRepository {
     @Inject(TenantContextService) private readonly tenantContext: TenantContextService,
     @Inject(IdService) private readonly ids: IdService,
   ) {}
+
+  /**
+   * Validates the stored promotion inside its transaction (so update merges are checked as a whole),
+   * checks that every referenced row belongs to this business, and writes the audit record (AUD-001).
+   */
+  private async finalize(tx: Prisma.TransactionClient, id: string, action: string, before: Prisma.InputJsonValue | null) {
+    const { businessId, userId, requestId } = this.tenantContext.require()
+    const promo = await tx.promotion.findFirstOrThrow({ where: { businessId, id }, include: { items: true } })
+    assertValidPromotionRule(promo)
+
+    const ids = (values: Array<string | null>) => [...new Set(values.filter((value): value is string => Boolean(value)))]
+    const variantIds = ids([promo.rewardVariantId, ...promo.items.map(i => i.variantId)])
+    const productIds = ids([promo.rewardProductId, ...promo.items.map(i => i.productId)])
+    const categoryIds = ids(promo.items.map(i => i.categoryId))
+    const unitIds = ids([promo.rewardUnitId, ...promo.items.map(i => i.unitId)])
+    const [variants, products, categories, units, branch, group] = await Promise.all([
+      tx.productVariant.count({ where: { businessId, id: { in: variantIds } } }),
+      tx.product.count({ where: { businessId, id: { in: productIds } } }),
+      tx.category.count({ where: { businessId, id: { in: categoryIds } } }),
+      tx.unit.count({ where: { businessId, id: { in: unitIds } } }),
+      promo.branchScope ? tx.branch.count({ where: { businessId, id: promo.branchScope } }) : 1,
+      promo.customerGroupScope ? tx.customerGroup.count({ where: { businessId, id: promo.customerGroupScope } }) : 1,
+    ])
+    if (variants !== variantIds.length || products !== productIds.length || categories !== categoryIds.length
+      || units !== unitIds.length || branch !== 1 || group !== 1) {
+      throw errors.badRequest('Invalid promotion: it references a product, category, unit, branch or customer group that does not exist')
+    }
+
+    await tx.auditLog.create({
+      data: {
+        id: this.ids.generate(),
+        businessId,
+        userId,
+        action,
+        entityType: 'Promotion',
+        entityId: id,
+        before: before ?? Prisma.JsonNull,
+        after: this.auditSnapshot(promo),
+        requestId,
+      },
+    })
+    return promo
+  }
+
+  private auditSnapshot(promo: { code: string; type: string; active: boolean; rewardType: string; discountValue: Prisma.Decimal; startDate: Date; endDate: Date }) {
+    return {
+      code: promo.code,
+      type: promo.type,
+      active: promo.active,
+      rewardType: promo.rewardType,
+      discountValue: promo.discountValue.toString(),
+      startDate: promo.startDate.toISOString(),
+      endDate: promo.endDate.toISOString(),
+    }
+  }
 
   async list(query: PromotionQueryDto) {
     const { businessId } = this.tenantContext.require()
@@ -144,13 +200,10 @@ export class PromotionsRepository {
         })
       }
 
-      return tx.promotion.findFirst({
-        where: { businessId, id },
-        include: { items: true },
-      })
+      return this.finalize(tx, id, 'promotion.created', null)
     })
 
-    return this.mapPromotion(created!)
+    return this.mapPromotion(created)
   }
 
   async update(id: string, dto: UpdatePromotionDto) {
@@ -214,13 +267,10 @@ export class PromotionsRepository {
         }
       }
 
-      return tx.promotion.findFirst({
-        where: { businessId, id },
-        include: { items: true },
-      })
+      return this.finalize(tx, id, 'promotion.updated', this.auditSnapshot(existing))
     })
 
-    return this.mapPromotion(updated!)
+    return this.mapPromotion(updated)
   }
 
   async delete(id: string) {
@@ -236,6 +286,20 @@ export class PromotionsRepository {
       })
       await tx.promotion.delete({
         where: { businessId_id: { businessId, id } },
+      })
+      const { userId, requestId } = this.tenantContext.require()
+      await tx.auditLog.create({
+        data: {
+          id: this.ids.generate(),
+          businessId,
+          userId,
+          action: 'promotion.deleted',
+          entityType: 'Promotion',
+          entityId: id,
+          before: this.auditSnapshot(existing),
+          after: { deleted: true },
+          requestId,
+        },
       })
     })
 

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { errorMessage } from '~/utils/errors'
+import { sanitizeDecimalInput } from '~/utils/money'
 const api = useApiClient()
 const route = useRoute()
 const toast = useToast()
@@ -128,8 +129,12 @@ const openPaymentModal = (p: PurchaseListItem) => {
   paymentForm.method = 'CASH'
   paymentForm.reference = ''
   paymentForm.notes = ''
+  // One key per opened form: a retry after a lost response cannot record the payment twice
+  paymentIdempotencyKey = crypto.randomUUID()
   paymentModal.value = true
 }
+
+let paymentIdempotencyKey = ''
 
 const submitPayment = async () => {
   if (!selectedPurchaseForPayment.value) return
@@ -142,11 +147,11 @@ const submitPayment = async () => {
   recordingPayment.value = true
   try {
     await api.post(`/purchases/${selectedPurchaseForPayment.value.id}/payments`, {
-      amount: String(amountNum),
+      amount: sanitizeDecimalInput(String(paymentForm.amount), 4),
       method: paymentForm.method,
       reference: paymentForm.reference.trim() || undefined,
       notes: paymentForm.notes.trim() || undefined,
-    })
+    }, { idempotencyKey: paymentIdempotencyKey })
     toast.success('ສຳເລັດ', 'ບັນທຶກການຊຳລະເງິນຕັດໜີ້ຮຽບຮ້ອຍແລ້ວ')
     paymentModal.value = false
     await fetchPurchases()

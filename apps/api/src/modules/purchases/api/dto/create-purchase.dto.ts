@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer'
-import { ArrayMinSize, IsArray, IsBoolean, IsDateString, IsEnum, IsNotEmpty, IsNumberString, IsOptional, IsString, IsUUID, MaxLength, ValidateNested } from 'class-validator'
+import { ArrayMinSize, IsArray, IsBoolean, IsDateString, IsEnum, IsNotEmpty, IsOptional, IsString, IsUUID, Matches, MaxLength, ValidateNested } from 'class-validator'
+import { MONEY_MESSAGE, MONEY_PATTERN, QUANTITY_MESSAGE, QUANTITY_PATTERN } from '../../../../common/validation/decimal-patterns'
 
 export enum PurchasePaymentMethodInput {
   CASH = 'CASH',
@@ -11,15 +12,15 @@ export class PurchaseItemInputDto {
   @IsUUID('7')
   variantId!: string
 
-  @IsNumberString()
+  @Matches(QUANTITY_PATTERN, { message: QUANTITY_MESSAGE })
   @IsNotEmpty()
   orderedQuantity!: string
 
-  @IsNumberString()
+  @Matches(MONEY_PATTERN, { message: MONEY_MESSAGE })
   @IsNotEmpty()
   unitCost!: string
 
-  @IsNumberString()
+  @Matches(MONEY_PATTERN, { message: MONEY_MESSAGE })
   @IsOptional()
   taxAmount?: string
 }
@@ -51,7 +52,7 @@ export class CreatePurchaseDto {
   @IsOptional()
   paymentMethod?: PurchasePaymentMethodInput
 
-  @IsNumberString()
+  @Matches(MONEY_PATTERN, { message: MONEY_MESSAGE })
   @IsOptional()
   paidAmount?: string
 

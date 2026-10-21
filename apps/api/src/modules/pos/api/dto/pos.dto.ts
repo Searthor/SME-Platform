@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer'
-import { ArrayMinSize, IsArray, IsEnum, IsInt, IsNotEmpty, IsNumberString, IsOptional, IsString, IsUUID, MaxLength, Min, ValidateNested } from 'class-validator'
+import { ArrayMinSize, IsArray, IsEnum, IsInt, IsNotEmpty, IsOptional, IsString, IsUUID, Matches, MaxLength, Min, ValidateNested } from 'class-validator'
+import { MONEY_MESSAGE, MONEY_PATTERN, QUANTITY_MESSAGE, QUANTITY_PATTERN } from '../../../../common/validation/decimal-patterns'
 import { CashMovementType, PaymentMethod } from '@prisma/client'
 
 export class OpenSessionDto {
@@ -10,7 +11,7 @@ export class OpenSessionDto {
   @IsOptional()
   registerId?: string
 
-  @IsNumberString()
+  @Matches(MONEY_PATTERN, { message: MONEY_MESSAGE })
   @IsNotEmpty()
   openingCash!: string
 
@@ -21,7 +22,7 @@ export class OpenSessionDto {
 }
 
 export class CloseSessionDto {
-  @IsNumberString()
+  @Matches(MONEY_PATTERN, { message: MONEY_MESSAGE })
   @IsNotEmpty()
   closingCashCount!: string
 
@@ -35,7 +36,7 @@ export class CashMovementDto {
   @IsEnum(CashMovementType)
   type!: CashMovementType
 
-  @IsNumberString()
+  @Matches(MONEY_PATTERN, { message: MONEY_MESSAGE })
   @IsNotEmpty()
   amount!: string
 
@@ -50,7 +51,7 @@ export class SaleItemInputDto {
   @IsUUID()
   variantId!: string
 
-  @IsNumberString()
+  @Matches(QUANTITY_PATTERN, { message: QUANTITY_MESSAGE })
   @IsNotEmpty()
   quantity!: string
 }
@@ -65,7 +66,7 @@ export class ManualDiscountDto {
   @IsEnum(ManualDiscountType)
   type!: ManualDiscountType
 
-  @IsNumberString()
+  @Matches(MONEY_PATTERN, { message: MONEY_MESSAGE })
   @IsNotEmpty()
   value!: string
 }
@@ -74,11 +75,11 @@ export class SalePaymentInputDto {
   @IsEnum(PaymentMethod)
   method!: PaymentMethod
 
-  @IsNumberString()
+  @Matches(MONEY_PATTERN, { message: MONEY_MESSAGE })
   @IsNotEmpty()
   amount!: string
 
-  @IsNumberString()
+  @Matches(MONEY_PATTERN, { message: MONEY_MESSAGE })
   @IsOptional()
   tenderedAmount?: string
 
@@ -132,7 +133,7 @@ export class CreateSaleDto extends QuoteSaleDto {
   notes?: string
 
   /** The total the cashier saw; if the server total differs the sale is refused with SALE_TOTAL_CHANGED. */
-  @IsNumberString()
+  @Matches(MONEY_PATTERN, { message: MONEY_MESSAGE })
   @IsOptional()
   expectedGrandTotal?: string
 

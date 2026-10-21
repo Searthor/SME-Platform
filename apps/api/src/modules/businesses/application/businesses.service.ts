@@ -46,6 +46,7 @@ export class BusinessesService {
       branchId,
       branchCode: dto.branchCode?.trim().toUpperCase() || 'MAIN',
       branchName: dto.branchName?.trim() || 'ສາຂາຫຼັກ',
+      warehouseId: this.ids.generate(),
       memberId,
       actorUserId,
       defaultRoles: roles,

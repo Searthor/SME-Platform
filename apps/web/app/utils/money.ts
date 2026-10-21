@@ -41,6 +41,12 @@ export const toApiDecimal = (value: string, scale: number): string => {
   return scale > 0 ? `${integerPart}.${fraction.padEnd(scale, '0')}` : integerPart
 }
 
+/** Drop insignificant fraction zeros from an API decimal string ('1500.5000' -> '1500.5'), without floats. */
+export const trimDecimalString = (value: string | null | undefined): string => {
+  if (!value) return '0'
+  return value.includes('.') ? value.replace(/\.?0+$/, '') : value
+}
+
 /**
  * Format money amount with comma thousands separators and without trailing .00 decimals.
  * Example: 1200000 -> "1,200,000"

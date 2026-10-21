@@ -70,19 +70,11 @@ export class PosService {
   /** A retry with the same Idempotency-Key returns the original sale instead of selling twice. */
   async createSale(userId: string, dto: CreateSaleDto, idempotencyKey?: string) {
     const claim = this.idempotency.prepare(SALE_CREATE_OPERATION, idempotencyKey, dto)
-    if (!claim) return this.priceAndCreateSale(userId, dto)
-
-    const replayedSaleId = await this.idempotency.findReplay(claim)
-    if (replayedSaleId) return this.getSaleById(replayedSaleId)
-
-    try {
-      return await this.priceAndCreateSale(userId, dto, claim)
-    } catch (error) {
-      if (!this.idempotency.isDuplicateClaim(error)) throw error
-      const concurrentSaleId = await this.idempotency.findReplay(claim)
-      if (!concurrentSaleId) throw error
-      return this.getSaleById(concurrentSaleId)
-    }
+    return this.idempotency.run(
+      claim,
+      () => this.priceAndCreateSale(userId, dto, claim),
+      saleId => this.getSaleById(saleId),
+    )
   }
 
   private async priceAndCreateSale(userId: string, dto: CreateSaleDto, claim?: IdempotencyClaim) {

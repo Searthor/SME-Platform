@@ -4,6 +4,7 @@ import type { PurchasesRepository } from '../infrastructure/purchases.repository
 import type { IdService } from '../../../core/ids/id.service'
 import type { TenantContextService } from '../../../core/tenancy/tenant-context.service'
 import type { PrismaService } from '../../../core/database/prisma.service'
+import type { IdempotencyService } from '../../../core/idempotency/idempotency.service'
 import { Prisma } from '@prisma/client'
 
 describe('PurchasesService (MON-001, MON-003, PUR-001)', () => {
@@ -30,7 +31,9 @@ describe('PurchasesService (MON-001, MON-003, PUR-001)', () => {
     },
   } as unknown as PrismaService
 
-  const service = new PurchasesService(repository, ids, tenantContext, prisma)
+  const idempotency = { prepare: vi.fn(), run: vi.fn((_claim: unknown, execute: () => unknown) => execute()) } as unknown as IdempotencyService
+
+  const service = new PurchasesService(repository, ids, tenantContext, prisma, idempotency)
 
   it('calculates line subtotals and grand total accurately on backend', async () => {
     vi.mocked(repository.create).mockResolvedValue({ id: 'uuid-v7-mock' } as never)

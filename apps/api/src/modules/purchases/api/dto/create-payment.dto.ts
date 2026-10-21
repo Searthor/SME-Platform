@@ -1,8 +1,9 @@
-import { IsDateString, IsEnum, IsNotEmpty, IsNumberString, IsOptional, IsString, MaxLength } from 'class-validator'
+import { IsDateString, IsEnum, IsNotEmpty, IsOptional, IsString, Matches, MaxLength } from 'class-validator'
+import { MONEY_MESSAGE, MONEY_PATTERN } from '../../../../common/validation/decimal-patterns'
 import { PaymentMethod } from '@prisma/client'
 
 export class CreatePurchasePaymentDto {
-  @IsNumberString()
+  @Matches(MONEY_PATTERN, { message: MONEY_MESSAGE })
   @IsNotEmpty()
   amount!: string
 

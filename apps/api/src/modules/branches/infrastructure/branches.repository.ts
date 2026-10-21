@@ -3,6 +3,7 @@ import { BranchStatus, Prisma } from '@prisma/client'
 import { errors } from '../../../common/errors/app.error'
 import { PrismaService } from '../../../core/database/prisma.service'
 import { TenantContextService } from '../../../core/tenancy/tenant-context.service'
+import { defaultWarehouseFor } from '../../inventory/domain/default-warehouse'
 
 @Injectable()
 export class BranchesRepository {
@@ -40,6 +41,7 @@ export class BranchesRepository {
     actorUserId: string
     code: string
     name: string
+    warehouseId: string
     requestId?: string
   }) {
     const context = this.tenantContext.require()
@@ -50,6 +52,7 @@ export class BranchesRepository {
           data: { id: input.id, businessId: context.businessId, code: input.code, name: input.name },
           select: { id: true, businessId: true, code: true, name: true, status: true, createdAt: true, updatedAt: true },
         })
+        await tx.warehouse.create({ data: defaultWarehouseFor(input.warehouseId, branch) })
         await tx.auditLog.create({
           data: {
             id: input.auditId,

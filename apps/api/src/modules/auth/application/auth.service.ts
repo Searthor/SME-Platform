@@ -76,6 +76,7 @@ export class AuthService {
         branchId: this.ids.generate(),
         branchCode: dto.branchCode.trim().toUpperCase(),
         branchName: dto.branchName.trim(),
+        warehouseId: this.ids.generate(),
         memberId,
         sessionId,
         tokenFamilyId: this.ids.generate(),

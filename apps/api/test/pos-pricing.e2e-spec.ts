@@ -23,6 +23,8 @@ describeWithDatabase('POS server-side pricing E2E (MON-003, SAL-005, PAY-004)', 
   let variantId: string
   let vipGroupId: string
   let vipCustomerId: string
+  let warehouseId: string
+  let sessionId: string
   const identifier = `pricing-owner-${uuidv7()}@example.com`
 
   const http = () => request(app.getHttpServer() as Parameters<typeof request>[0])
@@ -60,20 +62,19 @@ describeWithDatabase('POS server-side pricing E2E (MON-003, SAL-005, PAY-004)', 
     businessId = branch.businessId
     branchId = branch.id
 
-    // Catalog and stock fixtures (onboarding does not create a warehouse yet)
-    const warehouseId = uuidv7()
+    // Onboarding provisions the branch's default warehouse
+    const warehouse = await prisma.warehouse.findFirstOrThrow({ where: { businessId, branchId, isDefault: true } })
+    warehouseId = warehouse.id
     const unitId = uuidv7()
     const productId = uuidv7()
     variantId = uuidv7()
     vipGroupId = uuidv7()
     vipCustomerId = uuidv7()
-    await prisma.warehouse.create({ data: { id: warehouseId, businessId, branchId, code: 'WH', name: 'Main', isDefault: true } })
     await prisma.unit.create({ data: { id: unitId, businessId, code: 'CUP', name: 'Cup' } })
     await prisma.product.create({ data: { id: productId, businessId, unitId, name: 'Latte' } })
     await prisma.productVariant.create({
       data: { id: variantId, businessId, productId, sellingPrice: new Prisma.Decimal('10000'), cost: new Prisma.Decimal('6000'), isDefault: true },
     })
-    await prisma.stockBalance.create({ data: { id: uuidv7(), businessId, warehouseId, variantId, quantity: new Prisma.Decimal('20') } })
     await prisma.customerGroup.create({ data: { id: vipGroupId, businessId, code: 'VIP', name: 'VIP' } })
     await prisma.customer.create({ data: { id: vipCustomerId, businessId, groupId: vipGroupId, name: 'VIP Customer' } })
     await prisma.promotion.create({
@@ -84,7 +85,10 @@ describeWithDatabase('POS server-side pricing E2E (MON-003, SAL-005, PAY-004)', 
       },
     })
 
-    await post('/pos/sessions/open', { branchId, openingCash: '0' }).expect(201)
+    // Opening stock goes through the stock count endpoint, which records an ADJUSTMENT movement
+    await post('/inventory/adjustments', { warehouseId, reason: 'Opening stock', lines: [{ variantId, countedQuantity: '20' }] }).expect(201)
+
+    sessionId = data(await post('/pos/sessions/open', { branchId, openingCash: '0' }).expect(201)).id as string
   })
 
   afterAll(async () => {
@@ -164,11 +168,34 @@ describeWithDatabase('POS server-side pricing E2E (MON-003, SAL-005, PAY-004)', 
     expect(await stock()).toBe(before)
   })
 
+  it('records opening stock and stock counts as ADJUSTMENT movements that explain the balance', async () => {
+    const before = Number(await stock())
+    const adjustment = data(await post('/inventory/adjustments', {
+      warehouseId, reason: 'Weekly count', lines: [{ variantId, countedQuantity: String(before - 2) }],
+    }).expect(201))
+    expect(adjustment.lines).toEqual([{ variantId, countedQuantity: String(before - 2), delta: '-2' }])
+
+    const movements = await prisma.stockMovement.findMany({ where: { businessId, variantId } })
+    const ledgerTotal = movements.reduce((sum, m) => sum.add(m.quantityDelta), new Prisma.Decimal(0))
+    expect(ledgerTotal.toString()).toBe(await stock())
+
+    const balances = await http().get(`/api/v1/inventory/balances?warehouseId=${warehouseId}`).set('Authorization', `Bearer ${token}`).expect(200)
+    const items = data(balances).items as Array<Record<string, unknown>>
+    expect(items.find(item => item.variantId === variantId)?.quantity).toBe(String(before - 2))
+  })
+
   it('requires sale.discount for manual discounts', async () => {
     await prisma.rolePermission.deleteMany({ where: { businessId, permissionCode: 'sale.discount' } })
 
     const denied = await post('/pos/quote', { branchId, items: [{ variantId, quantity: '1' }], manualDiscount: { type: 'PERCENT', value: '10' } }).expect(403)
     expect(errorCode(denied)).toBe('DISCOUNT_PERMISSION_REQUIRED')
     await post('/pos/quote', { branchId, items: [{ variantId, quantity: '1' }] }).expect(201)
+  })
+
+  it('refuses sales into a closed shift', async () => {
+    await post(`/pos/sessions/${sessionId}/close`, { closingCashCount: '0' }).expect(201)
+    const response = await post('/pos/sales', { branchId, posSessionId: sessionId, items: [{ variantId, quantity: '1' }] }).expect(409)
+    expect(errorCode(response)).toBe('SESSION_NOT_OPEN')
+    expect(await prisma.auditLog.count({ where: { businessId, action: 'pos.session.closed', entityId: sessionId } })).toBe(1)
   })
 })

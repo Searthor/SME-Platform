@@ -1,17 +1,6 @@
 import { Type } from 'class-transformer'
-import {
-  IsArray,
-  IsBoolean,
-  IsEnum,
-  IsISO8601,
-  IsNotEmpty,
-  IsNumberString,
-  IsOptional,
-  IsString,
-  IsUUID,
-  MaxLength,
-  ValidateNested,
-} from 'class-validator'
+import { IsArray, IsBoolean, IsEnum, IsISO8601, IsNotEmpty, IsNumberString, IsOptional, IsString, IsUUID, Matches, MaxLength, ValidateNested } from 'class-validator'
+import { MONEY_MESSAGE, MONEY_PATTERN, PERCENT_MESSAGE, PERCENT_PATTERN, QUANTITY_MESSAGE, QUANTITY_PATTERN } from '../../../../common/validation/decimal-patterns'
 
 export enum PromotionType {
   DISCOUNT = 'DISCOUNT',
@@ -73,14 +62,12 @@ export class CreatePromotionDto {
   @IsNotEmpty()
   endDate!: string
 
-  @IsString()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: '$property must be HH:MM (24-hour)' })
   @IsOptional()
-  @MaxLength(10)
   startTime?: string
 
-  @IsString()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: '$property must be HH:MM (24-hour)' })
   @IsOptional()
-  @MaxLength(10)
   endTime?: string
 
   @IsOptional()
@@ -109,11 +96,11 @@ export class CreatePromotionDto {
   @IsOptional()
   usageLimit?: number
 
-  @IsNumberString()
+  @Matches(QUANTITY_PATTERN, { message: QUANTITY_MESSAGE })
   @IsOptional()
   minQuantity?: string
 
-  @IsNumberString()
+  @Matches(MONEY_PATTERN, { message: MONEY_MESSAGE })
   @IsOptional()
   minAmount?: string
 
@@ -121,15 +108,15 @@ export class CreatePromotionDto {
   @IsOptional()
   rewardType?: PromotionRewardType
 
-  @IsNumberString()
+  @Matches(MONEY_PATTERN, { message: MONEY_MESSAGE })
   @IsOptional()
   discountValue?: string
 
-  @IsNumberString()
+  @Matches(QUANTITY_PATTERN, { message: QUANTITY_MESSAGE })
   @IsOptional()
   rewardQuantity?: string
 
-  @IsNumberString()
+  @Matches(PERCENT_PATTERN, { message: PERCENT_MESSAGE })
   @IsOptional()
   rewardDiscountPercent?: string
 
@@ -145,7 +132,7 @@ export class CreatePromotionDto {
   @IsOptional()
   rewardUnitId?: string
 
-  @IsNumberString()
+  @Matches(MONEY_PATTERN, { message: MONEY_MESSAGE })
   @IsOptional()
   maxDiscountCap?: string
 
@@ -183,14 +170,12 @@ export class UpdatePromotionDto {
   @IsOptional()
   endDate?: string
 
-  @IsString()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: '$property must be HH:MM (24-hour)' })
   @IsOptional()
-  @MaxLength(10)
   startTime?: string
 
-  @IsString()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: '$property must be HH:MM (24-hour)' })
   @IsOptional()
-  @MaxLength(10)
   endTime?: string
 
   @IsOptional()
@@ -219,11 +204,11 @@ export class UpdatePromotionDto {
   @IsOptional()
   usageLimit?: number
 
-  @IsNumberString()
+  @Matches(QUANTITY_PATTERN, { message: QUANTITY_MESSAGE })
   @IsOptional()
   minQuantity?: string
 
-  @IsNumberString()
+  @Matches(MONEY_PATTERN, { message: MONEY_MESSAGE })
   @IsOptional()
   minAmount?: string
 
@@ -231,15 +216,15 @@ export class UpdatePromotionDto {
   @IsOptional()
   rewardType?: PromotionRewardType
 
-  @IsNumberString()
+  @Matches(MONEY_PATTERN, { message: MONEY_MESSAGE })
   @IsOptional()
   discountValue?: string
 
-  @IsNumberString()
+  @Matches(QUANTITY_PATTERN, { message: QUANTITY_MESSAGE })
   @IsOptional()
   rewardQuantity?: string
 
-  @IsNumberString()
+  @Matches(PERCENT_PATTERN, { message: PERCENT_MESSAGE })
   @IsOptional()
   rewardDiscountPercent?: string
 
@@ -255,7 +240,7 @@ export class UpdatePromotionDto {
   @IsOptional()
   rewardUnitId?: string
 
-  @IsNumberString()
+  @Matches(MONEY_PATTERN, { message: MONEY_MESSAGE })
   @IsOptional()
   maxDiscountCap?: string
 

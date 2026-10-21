@@ -282,22 +282,31 @@ async function seed() {
           },
         })
 
-        // Add initial stock balance so cashier can sell
+        // Opening stock so the cashier can sell: only for a new balance, always with its movement (Rule 8)
         if (warehouse) {
-          await prisma.stockBalance.upsert({
+          const existingBalance = await prisma.stockBalance.findUnique({
             where: { warehouseId_variantId: { warehouseId: warehouse.id, variantId: varId } },
-            create: {
-              id: uuidv7(),
-              businessId: b.id,
-              warehouseId: warehouse.id,
-              variantId: varId,
-              quantity: new Prisma.Decimal(100),
-              version: 1,
-            },
-            update: {
-              quantity: new Prisma.Decimal(100),
-            },
           })
+          if (!existingBalance) {
+            const openingQuantity = new Prisma.Decimal(100)
+            await prisma.$transaction([
+              prisma.stockBalance.create({
+                data: { id: uuidv7(), businessId: b.id, warehouseId: warehouse.id, variantId: varId, quantity: openingQuantity, version: 1 },
+              }),
+              prisma.stockMovement.create({
+                data: {
+                  id: uuidv7(),
+                  businessId: b.id,
+                  warehouseId: warehouse.id,
+                  variantId: varId,
+                  type: 'ADJUSTMENT',
+                  quantityDelta: openingQuantity,
+                  referenceType: 'SEED_OPENING_STOCK',
+                  notes: 'Opening stock (seed)',
+                },
+              }),
+            ])
+          }
         }
       }
     }

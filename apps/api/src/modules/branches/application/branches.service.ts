@@ -26,6 +26,7 @@ export class BranchesService {
     return this.branches.createCurrent({
       id: this.ids.generate(),
       auditId: this.ids.generate(),
+      warehouseId: this.ids.generate(),
       actorUserId,
       code: dto.code.trim().toUpperCase(),
       name: dto.name.trim(),

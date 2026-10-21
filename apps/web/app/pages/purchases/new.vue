@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { errorMessage } from '~/utils/errors'
 import type { ProductList } from '~/types/api'
+import { trimDecimalString } from '~/utils/money'
 import FormattedNumberInput from '~/components/forms/FormattedNumberInput.vue'
 import Select2 from '~/components/forms/Select2.vue'
 
@@ -113,8 +114,8 @@ const fetchInitialData = async () => {
             id: v.id,
             name: v.name,
             sku: v.sku,
-            cost: v.cost ? String(Math.round(Number(v.cost))) : '0',
-            sellingPrice: v.sellingPrice ? String(Math.round(Number(v.sellingPrice))) : '0',
+            cost: trimDecimalString(v.cost),
+            sellingPrice: trimDecimalString(v.sellingPrice),
             productName: p.name,
             unitName: p.unit?.name || 'ອັນ',
           })
@@ -150,7 +151,7 @@ const addItemRow = () => {
   form.items.push({
     variantId: defaultVariant ? defaultVariant.id : '',
     orderedQuantity: 1,
-    unitCost: defaultVariant && defaultVariant.cost ? String(Math.round(Number(defaultVariant.cost))) : '0',
+    unitCost: trimDecimalString(defaultVariant?.cost),
     taxAmount: 0,
   })
 }
@@ -169,7 +170,7 @@ const onVariantChange = (row: OrderItemRow, val?: string | number | Array<string
   }
   const selected = variants.value.find(v => v.id === row.variantId)
   if (selected) {
-    row.unitCost = selected.cost ? String(Math.round(Number(selected.cost))) : '0'
+    row.unitCost = trimDecimalString(selected.cost)
   }
 }
 

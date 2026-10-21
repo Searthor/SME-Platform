@@ -45,6 +45,7 @@ describeWithDatabase('Tenant isolation E2E (TEN-002, TEN-003, TEN-004)', () => {
     await prisma.memberBranchAccess.deleteMany()
     await prisma.authSession.deleteMany()
     await prisma.businessMember.deleteMany()
+    await prisma.warehouse.deleteMany()
     await prisma.branch.deleteMany()
     await prisma.business.deleteMany()
     await prisma.passwordCredential.deleteMany()

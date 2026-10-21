@@ -17,6 +17,7 @@ const navigation = computed<NavItem[]>(() => [
   { label: 'Products', icon: 'box', href: '/products', matchPrefix: true },
   { label: 'Promotions', icon: 'tag', href: '/promotions', matchPrefix: true },
   { label: 'Purchases', icon: 'box', href: '/purchases', matchPrefix: true },
+  { label: 'Inventory ສະຕັອກ', icon: 'box', href: '/inventory', matchPrefix: true },
   { label: 'Suppliers', icon: 'truck', href: '/suppliers', matchPrefix: true },
   { label: 'Customers', icon: 'users', href: '/customers', matchPrefix: true },
   { label: 'Analytics', icon: 'chart', href: '/dashboard#analytics' },

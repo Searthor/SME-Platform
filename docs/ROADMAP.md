@@ -108,6 +108,8 @@ Tenant-safe create/search/update/archive; foreign references rejected by app and
 - balance reconciliation query/tool and low-stock query;
 - transfer draft/dispatch/receive if entitlement/product priority includes it.
 
+ສະຖານະ: ທຸກ branch ມີ default warehouse (ສ້າງພ້ອມ branch ແລະ backfill ດ້ວຍ migration); ທຸກການປ່ຽນສະຕັອກຜ່ານ `StockLedgerRepository` (conditional update/row lock + movement); `POST /inventory/adjustments` ເຮັດ opening stock/stock count, `GET /inventory/balances` (low stock) ແລະ `GET /inventory/movements`. Transfer ແລະ weighted-average costing ຍັງຄ້າງ.
+
 ### Decisions due
 
 Negative inventory remains disabled, movement sign conventions, transfer discrepancies, weighted-average costing and count workflow.

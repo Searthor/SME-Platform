@@ -46,6 +46,7 @@ export const errors = {
   purchaseNotModifiable: () => new AppError('PURCHASE_NOT_MODIFIABLE', 'Only draft purchases can be modified', 409),
   purchaseAlreadyReceived: () => new AppError('PURCHASE_ALREADY_RECEIVED', 'Purchase is already fully received', 409),
   purchaseCancelled: () => new AppError('PURCHASE_CANCELLED', 'Purchase is cancelled', 409),
+  purchasePaid: () => new AppError('PURCHASE_PAID', 'A purchase with recorded payments cannot be cancelled', 409),
   invalidReceiptQuantity: (msg?: string) => new AppError('INVALID_RECEIPT_QUANTITY', msg || 'Received quantity cannot exceed remaining ordered quantity', 422),
   invalidPaymentAmount: (msg?: string) => new AppError('INVALID_PAYMENT_AMOUNT', msg || 'Payment amount must be positive and cannot exceed outstanding balance', 422),
   warehouseNotFound: () => new AppError('WAREHOUSE_NOT_FOUND', 'Warehouse not found', 404),

@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common'
 import { PaymentMethod, Prisma } from '@prisma/client'
 import { errors } from '../../../common/errors/app.error'
 import { PrismaService } from '../../../core/database/prisma.service'
+import { IdempotencyService } from '../../../core/idempotency/idempotency.service'
 import { IdService } from '../../../core/ids/id.service'
 import { TenantContextService } from '../../../core/tenancy/tenant-context.service'
 import type { CreatePurchasePaymentDto } from '../api/dto/create-payment.dto'
@@ -17,6 +18,7 @@ export class PurchasesService {
     @Inject(IdService) private readonly ids: IdService,
     @Inject(TenantContextService) private readonly tenantContext: TenantContextService,
     @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(IdempotencyService) private readonly idempotency: IdempotencyService,
   ) {}
 
   listWarehouses() {
@@ -48,6 +50,7 @@ export class PurchasesService {
 
     const items: PurchaseItemData[] = dto.items.map((item) => {
       const orderedQty = new Prisma.Decimal(item.orderedQuantity)
+      if (orderedQty.lte(0)) throw errors.invalidReceiptQuantity('Ordered quantity must be greater than zero')
       const unitCost = new Prisma.Decimal(item.unitCost)
       const subtotal = orderedQty.mul(unitCost)
       const taxAmount = item.taxAmount ? new Prisma.Decimal(item.taxAmount) : new Prisma.Decimal(0)
@@ -134,7 +137,15 @@ export class PurchasesService {
     })
   }
 
-  receiveGoods(actorUserId: string, purchaseId: string, dto: ReceiveGoodsDto, requestId?: string) {
+  /** Idempotency-Key makes a retried receipt return the first receipt instead of adding stock twice. */
+  receiveGoods(actorUserId: string, purchaseId: string, dto: ReceiveGoodsDto, requestId?: string, idempotencyKey?: string) {
+    if (dto.items.some(item => new Prisma.Decimal(item.receivedQuantity).lte(0))) {
+      throw errors.invalidReceiptQuantity('Received quantity must be greater than zero')
+    }
+    if (new Set(dto.items.map(item => item.purchaseItemId)).size !== dto.items.length) {
+      throw errors.invalidReceiptQuantity('Each purchase line can appear only once per receipt')
+    }
+
     const items = dto.items.map(item => ({
       id: this.ids.generate(),
       purchaseItemId: item.purchaseItemId,
@@ -142,36 +153,47 @@ export class PurchasesService {
       stockMovementId: this.ids.generate(),
     }))
 
-    return this.repository.receiveGoods({
-      receiptId: this.ids.generate(),
-      purchaseId,
-      items,
-      auditId: this.ids.generate(),
-      actorUserId,
-      ...(dto.warehouseId ? { warehouseId: dto.warehouseId } : {}),
-      ...(dto.notes ? { notes: dto.notes } : {}),
-      ...(requestId ? { requestId } : {}),
-    })
+    const claim = this.idempotency.prepare('purchase.receive', idempotencyKey, { purchaseId, ...dto })
+    return this.idempotency.run(
+      claim,
+      () => this.repository.receiveGoods({
+        receiptId: this.ids.generate(),
+        purchaseId,
+        items,
+        auditId: this.ids.generate(),
+        actorUserId,
+        ...(dto.warehouseId ? { warehouseId: dto.warehouseId } : {}),
+        ...(dto.notes ? { notes: dto.notes } : {}),
+        ...(requestId ? { requestId } : {}),
+      }, claim),
+      receiptId => this.repository.findGoodsReceipt(receiptId),
+    )
   }
 
-  createPayment(actorUserId: string, purchaseId: string, dto: CreatePurchasePaymentDto, requestId?: string) {
+  /** Idempotency-Key makes a retried payment return the first payment instead of paying twice. */
+  createPayment(actorUserId: string, purchaseId: string, dto: CreatePurchasePaymentDto, requestId?: string, idempotencyKey?: string) {
     const amount = new Prisma.Decimal(dto.amount)
     if (amount.lte(0)) {
       throw errors.invalidPaymentAmount('Payment amount must be greater than zero')
     }
 
-    return this.repository.createPayment({
-      paymentId: this.ids.generate(),
-      allocationId: this.ids.generate(),
-      purchaseId,
-      amount,
-      method: dto.method ?? PaymentMethod.CASH,
-      auditId: this.ids.generate(),
-      actorUserId,
-      ...(dto.paidAt ? { paidAt: dto.paidAt } : {}),
-      ...(dto.reference ? { reference: dto.reference } : {}),
-      ...(dto.notes ? { notes: dto.notes } : {}),
-      ...(requestId ? { requestId } : {}),
-    })
+    const claim = this.idempotency.prepare('purchase.payment', idempotencyKey, { purchaseId, ...dto })
+    return this.idempotency.run(
+      claim,
+      () => this.repository.createPayment({
+        paymentId: this.ids.generate(),
+        allocationId: this.ids.generate(),
+        purchaseId,
+        amount,
+        method: dto.method ?? PaymentMethod.CASH,
+        auditId: this.ids.generate(),
+        actorUserId,
+        ...(dto.paidAt ? { paidAt: dto.paidAt } : {}),
+        ...(dto.reference ? { reference: dto.reference } : {}),
+        ...(dto.notes ? { notes: dto.notes } : {}),
+        ...(requestId ? { requestId } : {}),
+      }, claim),
+      paymentId => this.repository.findPayment(paymentId),
+    )
   }
 }

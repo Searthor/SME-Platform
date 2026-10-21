@@ -26,4 +26,20 @@ export class TenantContextService {
     if (!context) throw errors.tenantContextRequired()
     return context
   }
+
+  /** TEN-004: the member may only act on branches in their scope. */
+  assertBranchAccess(branchId: string): void {
+    const { branchScope } = this.require()
+    if (branchScope.kind === 'selected' && !branchScope.branchIds.includes(branchId)) throw errors.branchAccessDenied()
+  }
+
+  /** Where-fragment for branch-owned rows: the requested branch (after the scope check) or the whole scope. */
+  branchFilter(requestedBranchId?: string): { branchId?: string | { in: string[] } } {
+    if (requestedBranchId) {
+      this.assertBranchAccess(requestedBranchId)
+      return { branchId: requestedBranchId }
+    }
+    const { branchScope } = this.require()
+    return branchScope.kind === 'selected' ? { branchId: { in: [...branchScope.branchIds] } } : {}
+  }
 }

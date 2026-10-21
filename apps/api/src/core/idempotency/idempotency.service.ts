@@ -71,6 +71,27 @@ export class IdempotencyService {
     })
   }
 
+  /**
+   * Runs a critical command at most once per key: a completed key replays the original resource,
+   * and a concurrent duplicate that loses the claim race replays the winner's result.
+   * `execute` must call `claim()` inside its transaction when a claim is given.
+   */
+  async run<T>(claim: IdempotencyClaim | undefined, execute: () => Promise<T>, replay: (resourceId: string) => Promise<T>): Promise<T> {
+    if (!claim) return execute()
+
+    const completedId = await this.findReplay(claim)
+    if (completedId) return replay(completedId)
+
+    try {
+      return await execute()
+    } catch (error) {
+      if (!this.isDuplicateClaim(error)) throw error
+      const winnerId = await this.findReplay(claim)
+      if (!winnerId) throw error
+      return replay(winnerId)
+    }
+  }
+
   isDuplicateClaim(error: unknown): boolean {
     return error instanceof Prisma.PrismaClientKnownRequestError
       && error.code === 'P2002'

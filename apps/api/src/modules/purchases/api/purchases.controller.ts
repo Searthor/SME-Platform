@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, ParseUUIDPipe, Post, Query, Req, UseGuards } from '@nestjs/common'
+import { Body, Controller, Get, Headers, Inject, Param, ParseUUIDPipe, Post, Query, Req, UseGuards } from '@nestjs/common'
 import { CurrentActor } from '../../../common/http/current-actor.decorator'
 import type { AuthenticatedActor, AuthenticatedRequest } from '../../../common/http/request-context'
 import { TenantGuard } from '../../../core/tenancy/tenant.guard'
@@ -60,8 +60,9 @@ export class PurchasesController {
     @Param('purchaseId', new ParseUUIDPipe({ version: '7' })) purchaseId: string,
     @Body() dto: ReceiveGoodsDto,
     @Req() request: AuthenticatedRequest,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.purchases.receiveGoods(actor.userId, purchaseId, dto, request.requestId)
+    return this.purchases.receiveGoods(actor.userId, purchaseId, dto, request.requestId, idempotencyKey)
   }
 
   @Post('purchases/:purchaseId/payments')
@@ -71,7 +72,8 @@ export class PurchasesController {
     @Param('purchaseId', new ParseUUIDPipe({ version: '7' })) purchaseId: string,
     @Body() dto: CreatePurchasePaymentDto,
     @Req() request: AuthenticatedRequest,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.purchases.createPayment(actor.userId, purchaseId, dto, request.requestId)
+    return this.purchases.createPayment(actor.userId, purchaseId, dto, request.requestId, idempotencyKey)
   }
 }

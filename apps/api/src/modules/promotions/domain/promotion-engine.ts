@@ -101,6 +101,10 @@ const itemMatchesTargets = (line: PromotionLine, targets: PromotionRule['items']
 
 const groupDigits = (amount: Prisma.Decimal) => amount.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
 
+/** Guard for rows saved before minQuantity > 0 was enforced: never divide by zero. */
+const ONE = ZERO.add(1)
+const minimumQuantity = (promo: PromotionRule) => (promo.minQuantity.gt(0) ? promo.minQuantity : ONE)
+
 const capped = (discount: Prisma.Decimal, cap: Prisma.Decimal | null) => (cap && discount.gt(cap) ? cap : discount)
 
 /** Applies every given promotion to the server-priced lines. Rounding and clamping happen in the caller. */
@@ -134,8 +138,9 @@ export const evaluatePromotions = (promos: readonly PromotionRule[], lines: read
     } else if (promo.type === PromotionType.BUY_X_GET_Y) {
       // Buy X get Y of the same line free / discounted
       for (const line of lines) {
-        if (!itemMatchesTargets(line, promo.items) || line.quantity.lt(promo.minQuantity)) continue
-        const sets = line.quantity.div(promo.minQuantity).floor()
+        const minQuantity = minimumQuantity(promo)
+        if (!itemMatchesTargets(line, promo.items) || line.quantity.lt(minQuantity)) continue
+        const sets = line.quantity.div(minQuantity).floor()
         const freeQuantity = sets.mul(promo.rewardQuantity)
         const discount = line.unitPrice.mul(freeQuantity).mul(promo.rewardDiscountPercent).div(100)
         if (discount.gt(0)) {
@@ -147,8 +152,8 @@ export const evaluatePromotions = (promos: readonly PromotionRule[], lines: read
       // Buy item A, receive item B as a gift
       let triggerCount = ZERO
       for (const line of lines) {
-        if (itemMatchesTargets(line, promo.items) && line.quantity.gte(promo.minQuantity)) {
-          triggerCount = triggerCount.add(line.quantity.div(promo.minQuantity).floor())
+        if (itemMatchesTargets(line, promo.items) && line.quantity.gte(minimumQuantity(promo))) {
+          triggerCount = triggerCount.add(line.quantity.div(minimumQuantity(promo)).floor())
         }
       }
       if (triggerCount.gt(0) && promo.rewardVariantId) {

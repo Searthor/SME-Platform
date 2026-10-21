@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer'
-import { ArrayMinSize, IsArray, IsNotEmpty, IsNumberString, IsOptional, IsString, IsUUID, MaxLength, ValidateNested } from 'class-validator'
+import { ArrayMinSize, IsArray, IsNotEmpty, IsOptional, IsString, IsUUID, Matches, MaxLength, ValidateNested } from 'class-validator'
+import { QUANTITY_MESSAGE, QUANTITY_PATTERN } from '../../../../common/validation/decimal-patterns'
 
 export class ReceiveGoodsItemDto {
   @IsUUID('7')
@@ -10,7 +11,7 @@ export class ReceiveGoodsItemDto {
   @IsOptional()
   variantId?: string
 
-  @IsNumberString()
+  @Matches(QUANTITY_PATTERN, { message: QUANTITY_MESSAGE })
   @IsNotEmpty()
   receivedQuantity!: string
 }

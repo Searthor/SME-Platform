@@ -80,33 +80,31 @@ export class PosRepository {
 
   async ensureDefaultRegister(branchId: string) {
     const { businessId } = this.tenantContext.require()
-    let register = await this.prisma.posRegister.findFirst({
+    this.tenantContext.assertBranchAccess(branchId)
+    const register = await this.prisma.posRegister.findFirst({
       where: { businessId, branchId, active: true },
       orderBy: { createdAt: 'asc' },
     })
+    if (register) return register
 
-    if (!register) {
-      register = await this.prisma.posRegister.create({
-        data: {
-          id: this.ids.generate(),
-          businessId,
-          branchId,
-          code: 'REG-01',
-          name: 'ເຄົາເຕີ້ 1 (Counter 1)',
-          active: true,
-        },
-      })
-    }
-    return register
+    // Upsert on the unique code so two first-time openings cannot both insert REG-01
+    return this.prisma.posRegister.upsert({
+      where: { businessId_branchId_code: { businessId, branchId, code: 'REG-01' } },
+      create: {
+        id: this.ids.generate(),
+        businessId,
+        branchId,
+        code: 'REG-01',
+        name: 'ເຄົາເຕີ້ 1 (Counter 1)',
+        active: true,
+      },
+      update: { active: true },
+    })
   }
 
   async listRegisters(branchId?: string) {
     const context = this.tenantContext.require()
-    const branchFilter = branchId
-      ? { branchId }
-      : context.branchScope.kind === 'selected'
-        ? { branchId: { in: [...context.branchScope.branchIds] } }
-        : {}
+    const branchFilter = this.tenantContext.branchFilter(branchId)
 
     return this.prisma.posRegister.findMany({
       where: {
@@ -128,7 +126,7 @@ export class PosRepository {
       where: {
         businessId,
         status: PosSessionStatus.OPEN,
-        ...(branchId ? { branchId } : {}),
+        ...this.tenantContext.branchFilter(branchId),
       },
       include: {
         branch: { select: { id: true, name: true, code: true } },
@@ -155,7 +153,7 @@ export class PosRepository {
   async getSessionById(sessionId: string) {
     const { businessId } = this.tenantContext.require()
     const session = await this.prisma.posSession.findFirst({
-      where: { businessId, id: sessionId },
+      where: { businessId, id: sessionId, ...this.tenantContext.branchFilter() },
       include: {
         branch: { select: { id: true, name: true, code: true } },
         register: { select: { id: true, name: true, code: true } },
@@ -182,11 +180,7 @@ export class PosRepository {
     const limit = query.limit ?? 20
     const offset = query.offset ?? 0
 
-    const branchFilter = query.branchId
-      ? { branchId: query.branchId }
-      : context.branchScope.kind === 'selected'
-        ? { branchId: { in: [...context.branchScope.branchIds] } }
-        : {}
+    const branchFilter = this.tenantContext.branchFilter(query.branchId)
 
     const where: Prisma.PosSessionWhereInput = {
       businessId: context.businessId,
@@ -237,48 +231,58 @@ export class PosRepository {
   }
 
   async openSession(userId: string, dto: OpenSessionDto) {
-    const { businessId } = this.tenantContext.require()
+    const context = this.tenantContext.require()
+    const { businessId } = context
+    this.tenantContext.assertBranchAccess(dto.branchId)
 
     let registerId = dto.registerId
-    if (!registerId) {
-      const reg = await this.ensureDefaultRegister(dto.branchId)
-      registerId = reg.id
-    }
-
-    // Check if there is an existing OPEN session for this register
-    const active = await this.prisma.posSession.findFirst({
-      where: {
-        businessId,
-        registerId,
-        status: PosSessionStatus.OPEN,
-      },
-    })
-
-    if (active) {
-      throw errors.activeSessionExists()
+    if (registerId) {
+      const register = await this.prisma.posRegister.findFirst({
+        where: { businessId, id: registerId, branchId: dto.branchId, active: true },
+      })
+      if (!register) throw errors.resourceNotFound('POS Register')
+    } else {
+      registerId = (await this.ensureDefaultRegister(dto.branchId)).id
     }
 
     const now = new Date()
     const openingCash = new Prisma.Decimal(dto.openingCash || '0')
 
-    const session = await this.prisma.$transaction(async tx => tx.posSession.create({
-      data: {
-        id: this.ids.generate(),
-        businessId,
-        branchId: dto.branchId,
-        registerId,
-        sessionNumber: await this.documentNumbers.next(tx, businessId, 'SHIFT', now),
-        status: PosSessionStatus.OPEN,
-        openedAt: now,
-        openedByUserId: userId,
-        openingCash,
-        notes: dto.notes?.trim() || null,
-      },
-      include: {
-        branch: { select: { id: true, name: true, code: true } },
-        register: { select: { id: true, name: true, code: true } },
-      },
-    }))
+    const session = await this.prisma.$transaction(async tx => {
+      // Lock the register so two cashiers cannot both open a shift on it
+      await tx.$queryRaw`
+        SELECT "id" FROM "pos_registers"
+         WHERE "business_id" = ${businessId}::uuid AND "id" = ${registerId}::uuid
+         FOR UPDATE`
+      const active = await tx.posSession.findFirst({
+        where: { businessId, registerId, status: PosSessionStatus.OPEN },
+      })
+      if (active) throw errors.activeSessionExists()
+
+      const created = await tx.posSession.create({
+        data: {
+          id: this.ids.generate(),
+          businessId,
+          branchId: dto.branchId,
+          registerId,
+          sessionNumber: await this.documentNumbers.next(tx, businessId, 'SHIFT', now),
+          status: PosSessionStatus.OPEN,
+          openedAt: now,
+          openedByUserId: userId,
+          openingCash,
+          notes: dto.notes?.trim() || null,
+        },
+        include: {
+          branch: { select: { id: true, name: true, code: true } },
+          register: { select: { id: true, name: true, code: true } },
+        },
+      })
+      await this.audit(tx, userId, 'pos.session.opened', 'PosSession', created.id, null, {
+        sessionNumber: created.sessionNumber,
+        openingCash: openingCash.toFixed(4),
+      })
+      return created
+    })
 
     return {
       ...session,
@@ -286,41 +290,85 @@ export class PosRepository {
     }
   }
 
+  /** Locks the session row until commit and requires it to be OPEN and inside the member's branch scope. */
+  private async lockOpenSession(tx: Prisma.TransactionClient, sessionId: string, mode: 'UPDATE' | 'SHARE') {
+    const { businessId } = this.tenantContext.require()
+    const rows = mode === 'UPDATE'
+      ? await tx.$queryRaw<Array<{ status: PosSessionStatus; branch_id: string }>>`
+          SELECT "status", "branch_id" FROM "pos_sessions"
+           WHERE "business_id" = ${businessId}::uuid AND "id" = ${sessionId}::uuid FOR UPDATE`
+      : await tx.$queryRaw<Array<{ status: PosSessionStatus; branch_id: string }>>`
+          SELECT "status", "branch_id" FROM "pos_sessions"
+           WHERE "business_id" = ${businessId}::uuid AND "id" = ${sessionId}::uuid FOR SHARE`
+    const row = rows[0]
+    if (!row) throw errors.resourceNotFound('POS Session')
+    this.tenantContext.assertBranchAccess(row.branch_id)
+    if (row.status !== PosSessionStatus.OPEN) throw errors.sessionNotOpen()
+    return row
+  }
+
+  private async audit(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    action: string,
+    entityType: string,
+    entityId: string,
+    before: Prisma.InputJsonValue | null,
+    after: Prisma.InputJsonValue,
+  ) {
+    const { businessId, requestId } = this.tenantContext.require()
+    await tx.auditLog.create({
+      data: {
+        id: this.ids.generate(),
+        businessId,
+        userId,
+        action,
+        entityType,
+        entityId,
+        ...(before ? { before } : {}),
+        after,
+        requestId,
+      },
+    })
+  }
+
   async recordCashMovement(userId: string, sessionId: string, dto: CashMovementDto) {
     const { businessId } = this.tenantContext.require()
-
-    const session = await this.prisma.posSession.findFirst({
-      where: { businessId, id: sessionId },
-    })
-
-    if (!session) throw errors.resourceNotFound('POS Session')
-    if (session.status !== PosSessionStatus.OPEN) {
-      throw errors.sessionNotOpen()
-    }
-
     const amount = new Prisma.Decimal(dto.amount)
     if (amount.lte(0)) {
       throw errors.invalidPaymentAmount('Amount must be greater than zero')
     }
 
-    return this.prisma.posCashMovement.create({
-      data: {
-        id: this.ids.generate(),
-        businessId,
+    return this.prisma.$transaction(async tx => {
+      // Serialized with closing: a movement can never land in a shift that is being closed
+      await this.lockOpenSession(tx, sessionId, 'UPDATE')
+      const movement = await tx.posCashMovement.create({
+        data: {
+          id: this.ids.generate(),
+          businessId,
+          sessionId,
+          type: dto.type,
+          amount,
+          reason: dto.reason.trim(),
+          performedBy: userId,
+        },
+      })
+      await this.audit(tx, userId, 'pos.cash_movement.recorded', 'PosCashMovement', movement.id, null, {
         sessionId,
-        type: dto.type,
-        amount,
-        reason: dto.reason.trim(),
-        performedBy: userId,
-      },
+        type: movement.type,
+        amount: amount.toFixed(4),
+        reason: movement.reason,
+      })
+      return movement
     })
   }
 
-  async calculateSessionSummary(sessionId: string): Promise<SessionSummaryReport> {
+  async calculateSessionSummary(sessionId: string, txClient?: Prisma.TransactionClient): Promise<SessionSummaryReport> {
     const { businessId } = this.tenantContext.require()
+    const client = txClient ?? this.prisma
 
-    const session = await this.prisma.posSession.findFirst({
-      where: { businessId, id: sessionId },
+    const session = await client.posSession.findFirst({
+      where: { businessId, id: sessionId, ...this.tenantContext.branchFilter() },
       include: {
         branch: { select: { id: true, name: true } },
         register: { select: { id: true, name: true, code: true } },
@@ -345,7 +393,7 @@ export class PosRepository {
     const netCashMovements = cashIn.sub(cashOut)
 
     // Query sales made in this session
-    const sales = await this.prisma.sale.findMany({
+    const sales = await client.sale.findMany({
       where: {
         businessId,
         posSessionId: sessionId,
@@ -421,44 +469,51 @@ export class PosRepository {
 
   async closeSession(userId: string, sessionId: string, dto: CloseSessionDto) {
     const { businessId } = this.tenantContext.require()
-
-    const session = await this.prisma.posSession.findFirst({
-      where: { businessId, id: sessionId },
-    })
-
-    if (!session) throw errors.resourceNotFound('POS Session')
-    if (session.status === PosSessionStatus.CLOSED) {
-      throw errors.sessionAlreadyClosed()
-    }
-
     const closingCashCount = new Prisma.Decimal(dto.closingCashCount || '0')
-    const summary = await this.calculateSessionSummary(sessionId)
 
-    const expectedCash = new Prisma.Decimal(summary.expectedCash)
-    const cashDifference = closingCashCount.sub(expectedCash)
+    const closed = await this.prisma.$transaction(async tx => {
+      // FOR UPDATE waits for in-flight sales (FOR SHARE) and blocks new ones, so the totals are final
+      const row = await tx.posSession.findFirst({ where: { businessId, id: sessionId }, select: { status: true } })
+      if (row?.status === PosSessionStatus.CLOSED) throw errors.sessionAlreadyClosed()
+      await this.lockOpenSession(tx, sessionId, 'UPDATE')
 
-    const closed = await this.prisma.posSession.update({
-      where: { businessId_id: { businessId, id: sessionId } },
-      data: {
+      const session = await tx.posSession.findFirstOrThrow({ where: { businessId, id: sessionId } })
+      const summary = await this.calculateSessionSummary(sessionId, tx)
+      const expectedCash = new Prisma.Decimal(summary.expectedCash)
+      const cashDifference = closingCashCount.sub(expectedCash)
+
+      const updated = await tx.posSession.update({
+        where: { businessId_id: { businessId, id: sessionId } },
+        data: {
+          status: PosSessionStatus.CLOSED,
+          closedAt: new Date(),
+          closedByUserId: userId,
+          closingCashCount,
+          expectedCash,
+          cashDifference,
+          totalSalesCount: summary.salesCount,
+          totalGrossSales: new Prisma.Decimal(summary.grossSales),
+          totalDiscount: new Prisma.Decimal(summary.totalDiscount),
+          totalNetSales: new Prisma.Decimal(summary.netSales),
+          totalCashSales: new Prisma.Decimal(summary.cashSales),
+          totalBankSales: new Prisma.Decimal(summary.bankSales),
+          totalCreditSales: new Prisma.Decimal(summary.otherSales),
+          notes: dto.notes ? (session.notes ? `${session.notes}\n[Close Note]: ${dto.notes}` : dto.notes) : session.notes,
+        },
+        include: {
+          branch: { select: { id: true, name: true, code: true } },
+          register: { select: { id: true, name: true, code: true } },
+        },
+      })
+      await this.audit(tx, userId, 'pos.session.closed', 'PosSession', sessionId, { status: PosSessionStatus.OPEN }, {
         status: PosSessionStatus.CLOSED,
-        closedAt: new Date(),
-        closedByUserId: userId,
-        closingCashCount,
-        expectedCash,
-        cashDifference,
-        totalSalesCount: summary.salesCount,
-        totalGrossSales: new Prisma.Decimal(summary.grossSales),
-        totalDiscount: new Prisma.Decimal(summary.totalDiscount),
-        totalNetSales: new Prisma.Decimal(summary.netSales),
-        totalCashSales: new Prisma.Decimal(summary.cashSales),
-        totalBankSales: new Prisma.Decimal(summary.bankSales),
-        totalCreditSales: new Prisma.Decimal(summary.otherSales),
-        notes: dto.notes ? (session.notes ? `${session.notes}\n[Close Note]: ${dto.notes}` : dto.notes) : session.notes,
-      },
-      include: {
-        branch: { select: { id: true, name: true, code: true } },
-        register: { select: { id: true, name: true, code: true } },
-      },
+        expectedCash: expectedCash.toFixed(4),
+        closingCashCount: closingCashCount.toFixed(4),
+        cashDifference: cashDifference.toFixed(4),
+        salesCount: summary.salesCount,
+        netSales: summary.netSales,
+      })
+      return updated
     })
 
     return {
@@ -473,16 +528,14 @@ export class PosRepository {
   async searchProducts(query: { q?: string; branchId: string; warehouseId?: string }) {
     const { businessId } = this.tenantContext.require()
     const { q, branchId } = query
+    this.tenantContext.assertBranchAccess(branchId)
 
-    // Determine warehouse
-    let targetWarehouseId = query.warehouseId
-    if (!targetWarehouseId) {
-      const defaultWh = await this.prisma.warehouse.findFirst({
-        where: { businessId, branchId, status: 'ACTIVE' },
-        orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
-      })
-      targetWarehouseId = defaultWh?.id
-    }
+    // Stock shown is from the branch's own warehouse (the requested one, if it belongs to the branch)
+    const warehouse = await this.prisma.warehouse.findFirst({
+      where: { businessId, branchId, status: 'ACTIVE', ...(query.warehouseId ? { id: query.warehouseId } : {}) },
+      orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+    })
+    const targetWarehouseId = warehouse?.id
 
     const searchTerm = q?.trim()
 
@@ -600,6 +653,7 @@ export class PosRepository {
     })
     if (!warehouse) throw errors.warehouseNotFound()
     const warehouseId = warehouse.id
+    const openSessionId = sessionId
 
     const now = new Date()
     const saleId = this.ids.generate()
@@ -608,6 +662,9 @@ export class PosRepository {
     return this.prisma.$transaction(async tx => {
       // Claim first so a concurrent retry with the same key waits here instead of selling twice
       if (idempotency) await this.idempotency.claim(tx, idempotency, saleId)
+
+      // Shared lock: many sales may post concurrently, but never into a shift that is closing
+      await this.lockOpenSession(tx, openSessionId, 'SHARE')
 
       // Sale Number INV-YYYYMM-XXXX, issued inside the transaction so concurrent sales never collide
       const saleNumber = await this.documentNumbers.next(tx, businessId, 'INV', now)
@@ -709,11 +766,7 @@ export class PosRepository {
     const limit = query.limit ?? 30
     const skip = (page - 1) * limit
 
-    const branchFilter = query.branchId
-      ? { branchId: query.branchId }
-      : context.branchScope.kind === 'selected'
-        ? { branchId: { in: [...context.branchScope.branchIds] } }
-        : {}
+    const branchFilter = this.tenantContext.branchFilter(query.branchId)
 
     const where: Prisma.SaleWhereInput = {
       businessId: context.businessId,
@@ -789,7 +842,7 @@ export class PosRepository {
     const client = txClient || this.prisma
 
     const s = await client.sale.findFirst({
-      where: { businessId, id: saleId },
+      where: { businessId, id: saleId, ...this.tenantContext.branchFilter() },
       include: {
         branch: { select: { id: true, name: true, code: true } },
         warehouse: { select: { id: true, name: true, code: true } },

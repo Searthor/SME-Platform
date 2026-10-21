@@ -16,9 +16,7 @@ export class SalePricingRepository {
   /** Business currency/timezone, after checking the branch is active and within the member's scope (TEN-004). */
   async loadSellingContext(branchId: string): Promise<{ currencyCode: string; timeZone: string }> {
     const context = this.tenantContext.require()
-    if (context.branchScope.kind === 'selected' && !context.branchScope.branchIds.includes(branchId)) {
-      throw errors.branchAccessDenied()
-    }
+    this.tenantContext.assertBranchAccess(branchId)
 
     const branch = await this.prisma.branch.findFirst({
       where: { businessId: context.businessId, id: branchId, status: BranchStatus.ACTIVE },

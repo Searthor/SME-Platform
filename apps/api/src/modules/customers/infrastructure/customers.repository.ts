@@ -15,6 +15,30 @@ export class CustomersRepository {
     @Inject(IdService) private readonly ids: IdService,
   ) {}
 
+  /** Group discounts and group prices change what customers pay, so every change is audited (AUD-001). */
+  private async audit(
+    tx: Prisma.TransactionClient,
+    action: string,
+    entityId: string,
+    before: Prisma.InputJsonValue | null,
+    after: Prisma.InputJsonValue,
+  ) {
+    const { businessId, userId, requestId } = this.tenantContext.require()
+    await tx.auditLog.create({
+      data: {
+        id: this.ids.generate(),
+        businessId,
+        userId,
+        action,
+        entityType: 'CustomerGroup',
+        entityId,
+        before: before ?? Prisma.JsonNull,
+        after,
+        requestId,
+      },
+    })
+  }
+
   // =========================================================================
   // CUSTOMER GROUPS
   // =========================================================================
@@ -90,24 +114,31 @@ export class CustomersRepository {
       throw errors.conflict('ລະຫັດກຸ່ມລູກຄ້ານີ້ມີໃນລະບົບແລ້ວ (Duplicate group code)')
     }
 
-    if (dto.isDefault) {
-      await this.prisma.customerGroup.updateMany({
-        where: { businessId, isDefault: true },
-        data: { isDefault: false },
-      })
-    }
+    const created = await this.prisma.$transaction(async tx => {
+      if (dto.isDefault) {
+        await tx.customerGroup.updateMany({
+          where: { businessId, isDefault: true },
+          data: { isDefault: false },
+        })
+      }
 
-    const created = await this.prisma.customerGroup.create({
-      data: {
-        id: this.ids.generate(),
-        businessId,
-        name: dto.name.trim(),
-        code: dto.code.trim().toUpperCase(),
-        description: dto.description?.trim() || null,
-        discountPercent: dto.discountPercent !== undefined ? new Prisma.Decimal(dto.discountPercent) : new Prisma.Decimal(0),
-        isDefault: Boolean(dto.isDefault),
-        active: true,
-      },
+      const group = await tx.customerGroup.create({
+        data: {
+          id: this.ids.generate(),
+          businessId,
+          name: dto.name.trim(),
+          code: dto.code.trim().toUpperCase(),
+          description: dto.description?.trim() || null,
+          discountPercent: dto.discountPercent !== undefined ? new Prisma.Decimal(dto.discountPercent) : new Prisma.Decimal(0),
+          isDefault: Boolean(dto.isDefault),
+          active: true,
+        },
+      })
+      await this.audit(tx, 'customer_group.created', group.id, null, {
+        code: group.code,
+        discountPercent: group.discountPercent.toString(),
+      })
+      return group
     })
 
     return this.getGroupById(created.id)
@@ -120,13 +151,6 @@ export class CustomersRepository {
     })
     if (!group) throw errors.resourceNotFound('CustomerGroup')
 
-    if (dto.isDefault) {
-      await this.prisma.customerGroup.updateMany({
-        where: { businessId, isDefault: true, id: { not: id } },
-        data: { isDefault: false },
-      })
-    }
-
     const data: Prisma.CustomerGroupUpdateInput = {}
     if (dto.name !== undefined) data.name = dto.name.trim()
     if (dto.description !== undefined) data.description = dto.description.trim() || null
@@ -134,9 +158,24 @@ export class CustomersRepository {
     if (dto.isDefault !== undefined) data.isDefault = dto.isDefault
     if (dto.active !== undefined) data.active = dto.active
 
-    await this.prisma.customerGroup.update({
-      where: { businessId_id: { businessId, id } },
-      data,
+    await this.prisma.$transaction(async tx => {
+      if (dto.isDefault) {
+        await tx.customerGroup.updateMany({
+          where: { businessId, isDefault: true, id: { not: id } },
+          data: { isDefault: false },
+        })
+      }
+      const updated = await tx.customerGroup.update({
+        where: { businessId_id: { businessId, id } },
+        data,
+      })
+      await this.audit(
+        tx,
+        'customer_group.updated',
+        id,
+        { discountPercent: group.discountPercent.toString(), active: group.active, isDefault: group.isDefault },
+        { discountPercent: updated.discountPercent.toString(), active: updated.active, isDefault: updated.isDefault },
+      )
     })
 
     return this.getGroupById(id)
@@ -163,6 +202,7 @@ export class CustomersRepository {
       await tx.customerGroup.delete({
         where: { businessId_id: { businessId, id } },
       })
+      await this.audit(tx, 'customer_group.deleted', id, { code: group.code, name: group.name }, { deleted: true })
     })
 
     return { id, deleted: true }
@@ -226,6 +266,9 @@ export class CustomersRepository {
     if (!group) throw errors.resourceNotFound('CustomerGroup')
 
     const variantIds = items.map(i => i.variantId)
+    if (new Set(variantIds).size !== variantIds.length) {
+      throw errors.badRequest('ສິນຄ້າແຕ່ລະລາຍການເລືອກໄດ້ຄັ້ງດຽວ (Duplicate variants)')
+    }
     if (variantIds.length > 0) {
       const existingVariants = await this.prisma.productVariant.findMany({
         where: { businessId, id: { in: variantIds } },
@@ -252,6 +295,7 @@ export class CustomersRepository {
           })),
         })
       }
+      await this.audit(tx, 'customer_group.prices_set', customerGroupId, null, { prices: items })
     })
 
     return this.getGroupProducts(customerGroupId)
@@ -259,8 +303,11 @@ export class CustomersRepository {
 
   async removeGroupProduct(customerGroupId: string, variantId: string) {
     const { businessId } = this.tenantContext.require()
-    await this.prisma.productVariantGroupPrice.deleteMany({
-      where: { businessId, customerGroupId, variantId },
+    await this.prisma.$transaction(async tx => {
+      const removed = await tx.productVariantGroupPrice.deleteMany({
+        where: { businessId, customerGroupId, variantId },
+      })
+      if (removed.count > 0) await this.audit(tx, 'customer_group.price_removed', customerGroupId, { variantId }, { removed: true })
     })
     return { success: true }
   }

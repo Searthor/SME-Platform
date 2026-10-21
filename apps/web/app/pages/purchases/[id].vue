@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { errorMessage } from '~/utils/errors'
+import { sanitizeDecimalInput } from '~/utils/money'
 const route = useRoute()
 const api = useApiClient()
 const toast = useToast()
@@ -147,8 +148,11 @@ const openReceiveModal = () => {
     variantId: item.variantId,
     receivedQuantity: Math.max(0, Number(item.remainingQuantity)),
   }))
+  receiptIdempotencyKey = crypto.randomUUID()
   showReceiptModal.value = true
 }
+
+let receiptIdempotencyKey = ''
 
 const submitReceiveGoods = async () => {
   if (!purchase.value) return
@@ -165,10 +169,9 @@ const submitReceiveGoods = async () => {
       notes: receiptNotes.value.trim() || undefined,
       items: validItems.map(i => ({
         purchaseItemId: i.purchaseItemId,
-        variantId: i.variantId,
         receivedQuantity: String(i.receivedQuantity),
       })),
-    })
+    }, { idempotencyKey: receiptIdempotencyKey })
 
     toast.success('ຮັບເຄື່ອງສຳເລັດ', 'ເພີ່ມສະຕັອກ ແລະ ສ້າງປະຫວັດການຮັບຮຽບຮ້ອຍແລ້ວ')
     showReceiptModal.value = false
@@ -189,8 +192,12 @@ const openPaymentModal = () => {
   paymentForm.method = 'CASH'
   paymentForm.reference = ''
   paymentForm.notes = ''
+  // One key per opened form: a retry after a lost response cannot record the payment twice
+  paymentIdempotencyKey = crypto.randomUUID()
   showPaymentModal.value = true
 }
+
+let paymentIdempotencyKey = ''
 
 const submitPayment = async () => {
   if (!purchase.value) return
@@ -203,11 +210,11 @@ const submitPayment = async () => {
   recordingPayment.value = true
   try {
     await api.post(`/purchases/${purchase.value.id}/payments`, {
-      amount: String(amountNum),
+      amount: sanitizeDecimalInput(String(paymentForm.amount), 4),
       method: paymentForm.method,
       reference: paymentForm.reference.trim() || undefined,
       notes: paymentForm.notes.trim() || undefined,
-    })
+    }, { idempotencyKey: paymentIdempotencyKey })
 
     toast.success('ຊຳລະເງິນສຳເລັດ', 'ບັນທຶກການຕັດໜີ້ສິນຮຽບຮ້ອຍແລ້ວ')
     showPaymentModal.value = false

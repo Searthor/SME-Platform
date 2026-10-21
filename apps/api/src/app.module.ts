@@ -20,6 +20,7 @@ import { TenantModule } from './core/tenancy/tenant.module'
 import { TenantContextMiddleware } from './core/tenancy/tenant-context.middleware'
 import { CatalogModule } from './modules/catalog/catalog.module'
 import { PurchasesModule } from './modules/purchases/purchases.module'
+import { InventoryModule } from './modules/inventory/inventory.module'
 import { SuppliersModule } from './modules/suppliers/suppliers.module'
 import { CustomersModule } from './modules/customers/customers.module'
 import { PosModule } from './modules/pos/pos.module'
@@ -45,6 +46,7 @@ import { PromotionsModule } from './modules/promotions/promotions.module'
     CatalogModule,
     SuppliersModule,
     CustomersModule,
+    InventoryModule,
     PurchasesModule,
     PosModule,
     PromotionsModule,

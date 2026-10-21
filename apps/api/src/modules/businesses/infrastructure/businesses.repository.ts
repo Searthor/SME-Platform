@@ -3,6 +3,7 @@ import { BusinessStatus, type Prisma } from '@prisma/client'
 import { errors } from '../../../common/errors/app.error'
 import { PrismaService } from '../../../core/database/prisma.service'
 import { TenantContextService } from '../../../core/tenancy/tenant-context.service'
+import { defaultWarehouseFor } from '../../inventory/domain/default-warehouse'
 
 @Injectable()
 export class BusinessesRepository {
@@ -74,6 +75,7 @@ export class BusinessesRepository {
     branchId: string
     branchCode: string
     branchName: string
+    warehouseId: string
     memberId: string
     actorUserId: string
     defaultRoles: ReadonlyArray<{
@@ -103,6 +105,7 @@ export class BusinessesRepository {
           name: input.branchName,
         },
       })
+      await tx.warehouse.create({ data: defaultWarehouseFor(input.warehouseId, branch) })
       const member = await tx.businessMember.create({
         data: {
           id: input.memberId,

@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common'
 import { Prisma } from '@prisma/client'
 import { errors } from '../../../common/errors/app.error'
 import { PrismaService } from '../../../core/database/prisma.service'
+import { defaultWarehouseFor } from '../../inventory/domain/default-warehouse'
 
 export type RegistrationData = {
   userId: string
@@ -17,6 +18,7 @@ export type RegistrationData = {
   branchId: string
   branchCode: string
   branchName: string
+  warehouseId: string
   memberId: string
   sessionId: string
   tokenFamilyId: string
@@ -76,6 +78,7 @@ export class RegistrationRepository {
           name: data.branchName,
         },
       })
+      await tx.warehouse.create({ data: defaultWarehouseFor(data.warehouseId, branch) })
 
       const member = await tx.businessMember.create({
         data: {

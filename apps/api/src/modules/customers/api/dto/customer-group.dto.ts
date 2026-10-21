@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer'
-import { IsBoolean, IsNotEmpty, IsNumber, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator'
+import { ArrayMaxSize, IsArray, IsBoolean, IsNotEmpty, IsNumber, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, ValidateNested } from 'class-validator'
+import { MONEY_MESSAGE, MONEY_PATTERN } from '../../../../common/validation/decimal-patterns'
 
 export class CreateCustomerGroupDto {
   @IsString()
@@ -17,7 +18,7 @@ export class CreateCustomerGroupDto {
   @MaxLength(255)
   description?: string
 
-  @IsNumber()
+  @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   @Max(100)
   @IsOptional()
@@ -41,7 +42,7 @@ export class UpdateCustomerGroupDto {
   @MaxLength(255)
   description?: string
 
-  @IsNumber()
+  @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   @Max(100)
   @IsOptional()
@@ -72,13 +73,17 @@ export class CustomerGroupQueryDto {
 
 
 export class GroupProductPriceItemDto {
-  @IsString()
+  @IsUUID()
   variantId!: string
 
-  @IsString()
+  @Matches(MONEY_PATTERN, { message: MONEY_MESSAGE })
   price!: string
 }
 
 export class SetGroupProductPricesDto {
+  @IsArray()
+  @ArrayMaxSize(1000)
+  @ValidateNested({ each: true })
+  @Type(() => GroupProductPriceItemDto)
   items!: GroupProductPriceItemDto[]
 }

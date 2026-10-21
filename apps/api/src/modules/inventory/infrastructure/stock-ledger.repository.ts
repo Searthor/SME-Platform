@@ -69,7 +69,38 @@ export class StockLedgerRepository {
     await this.recordMovement(tx, change, change.quantity.negated())
   }
 
-  private async recordMovement(tx: Prisma.TransactionClient, change: StockChange, quantityDelta: Prisma.Decimal) {
+  /**
+   * Sets the balance to a counted quantity (opening stock / stock count). The row is created if
+   * missing, then locked, so the recorded delta is exact even while sales are running.
+   * Returns the signed delta (zero when the count matches and nothing is recorded).
+   */
+  async setCounted(tx: Prisma.TransactionClient, change: Omit<StockChange, 'quantity'> & { counted: Prisma.Decimal }): Promise<Prisma.Decimal> {
+    if (change.counted.isNegative()) throw errors.badRequest('Counted quantity cannot be negative')
+    await tx.$executeRaw`
+      INSERT INTO "stock_balances" ("id", "business_id", "warehouse_id", "variant_id", "quantity", "version", "updated_at")
+      VALUES (${this.ids.generate()}::uuid, ${change.businessId}::uuid, ${change.warehouseId}::uuid, ${change.variantId}::uuid, 0, 1, now())
+      ON CONFLICT ("warehouse_id", "variant_id") DO NOTHING`
+    const rows = await tx.$queryRaw<Array<{ quantity: Prisma.Decimal }>>`
+      SELECT "quantity" FROM "stock_balances"
+       WHERE "business_id" = ${change.businessId}::uuid
+         AND "warehouse_id" = ${change.warehouseId}::uuid
+         AND "variant_id" = ${change.variantId}::uuid
+       FOR UPDATE`
+    const current = new Prisma.Decimal(rows[0]?.quantity ?? 0)
+    const delta = change.counted.sub(current)
+    if (delta.isZero()) return delta
+
+    await tx.$executeRaw`
+      UPDATE "stock_balances"
+         SET "quantity" = ${change.counted.toString()}::numeric, "version" = "version" + 1, "updated_at" = now()
+       WHERE "business_id" = ${change.businessId}::uuid
+         AND "warehouse_id" = ${change.warehouseId}::uuid
+         AND "variant_id" = ${change.variantId}::uuid`
+    await this.recordMovement(tx, change, delta)
+    return delta
+  }
+
+  private async recordMovement(tx: Prisma.TransactionClient, change: Omit<StockChange, 'quantity'>, quantityDelta: Prisma.Decimal) {
     await tx.stockMovement.create({
       data: {
         id: change.movementId ?? this.ids.generate(),
