@@ -5,8 +5,10 @@ export class ReceiveGoodsItemDto {
   @IsUUID('7')
   purchaseItemId!: string
 
+  /** Ignored: the received variant always comes from the purchase line. Kept for older clients. */
   @IsUUID('7')
-  variantId!: string
+  @IsOptional()
+  variantId?: string
 
   @IsNumberString()
   @IsNotEmpty()

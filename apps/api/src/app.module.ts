@@ -12,6 +12,8 @@ import { UsersModule } from './modules/users/users.module'
 import { RequestIdMiddleware } from './common/http/request-id.middleware'
 import { ConfigModule } from './config/config.module'
 import { DatabaseModule } from './core/database/database.module'
+import { DocumentsModule } from './core/documents/documents.module'
+import { IdempotencyModule } from './core/idempotency/idempotency.module'
 import { IdsModule } from './core/ids/ids.module'
 import { PlatformModule } from './core/platform/platform.module'
 import { TenantModule } from './core/tenancy/tenant.module'
@@ -29,6 +31,8 @@ import { PromotionsModule } from './modules/promotions/promotions.module'
     ThrottlerModule.forRoot([{ name: 'default', ttl: 60_000, limit: 100 }]),
     DatabaseModule,
     IdsModule,
+    DocumentsModule,
+    IdempotencyModule,
     TenantModule,
     PlatformModule,
     AccessControlModule,

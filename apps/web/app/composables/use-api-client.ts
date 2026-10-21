@@ -18,7 +18,8 @@ export const useApiClient = () => {
   }
 
   const get = <T>(path: string) => request<T>(path)
-  const post = <T>(path: string, body?: unknown) => request<T>(path, { method: 'POST', body })
+  const post = <T>(path: string, body?: unknown, options: Pick<ApiRequestOptions, 'idempotencyKey'> = {}) =>
+    request<T>(path, { ...options, method: 'POST', body })
   const patch = <T>(path: string, body: unknown) => request<T>(path, { method: 'PATCH', body })
   const put = <T>(path: string, body?: unknown) => request<T>(path, { method: 'PUT', body })
   const del = <T>(path: string) => request<T>(path, { method: 'DELETE' })

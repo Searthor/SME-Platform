@@ -28,12 +28,6 @@ describe('PurchasesService (MON-001, MON-003, PUR-001)', () => {
     business: {
       findUnique: vi.fn().mockResolvedValue({ currencyCode: 'LAK' }),
     },
-    purchase: {
-      count: vi.fn().mockResolvedValue(0),
-    },
-    goodsReceipt: {
-      count: vi.fn().mockResolvedValue(0),
-    },
   } as unknown as PrismaService
 
   const service = new PurchasesService(repository, ids, tenantContext, prisma)

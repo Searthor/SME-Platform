@@ -7,6 +7,8 @@ export type ApiRequestOptions = {
   body?: unknown
   accessToken?: string | null
   csrfToken?: string | null
+  /** Sent as Idempotency-Key; reuse the same value only when retrying the exact same request. */
+  idempotencyKey?: string
 }
 
 export class ApiClientError extends Error {
@@ -48,6 +50,7 @@ export const requestApi = async <T>(path: string, options: ApiRequestOptions = {
 
   if (options.accessToken) headers.Authorization = `Bearer ${options.accessToken}`
   if (options.csrfToken) headers['X-CSRF-Token'] = options.csrfToken
+  if (options.idempotencyKey) headers['Idempotency-Key'] = options.idempotencyKey
 
   try {
     const response = await $fetch<ApiSuccess<T>>(`${config.public.apiBase}${path}`, {

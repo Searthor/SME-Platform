@@ -27,12 +27,12 @@ export class PurchaseListQueryDto {
   @Min(1)
   @Max(100)
   @IsOptional()
-  @Transform(({ value }) => (value !== undefined ? Number.parseInt(value, 10) : 50))
+  @Transform(({ value }) => (value !== undefined ? Number.parseInt(String(value), 10) : 50))
   limit = 50
 
   @IsInt()
   @Min(0)
   @IsOptional()
-  @Transform(({ value }) => (value !== undefined ? Number.parseInt(value, 10) : 0))
+  @Transform(({ value }) => (value !== undefined ? Number.parseInt(String(value), 10) : 0))
   offset = 0
 }

@@ -2,11 +2,11 @@ import { Inject, Injectable } from '@nestjs/common'
 import { PaymentAllocationTargetType, PaymentDirection, PaymentMethod, Prisma, PurchaseLifecycleStatus, PurchasePaymentStatus, StockMovementType } from '@prisma/client'
 import { errors } from '../../../common/errors/app.error'
 import { PrismaService } from '../../../core/database/prisma.service'
+import { DocumentNumberService } from '../../../core/documents/document-number.service'
 import { IdService } from '../../../core/ids/id.service'
 import { TenantContextService } from '../../../core/tenancy/tenant-context.service'
-import type { CreatePurchasePaymentDto } from '../api/dto/create-payment.dto'
+import { StockLedgerRepository } from '../../inventory/infrastructure/stock-ledger.repository'
 import type { PurchaseListQueryDto } from '../api/dto/purchase-query.dto'
-import type { ReceiveGoodsDto } from '../api/dto/receive-goods.dto'
 
 type AuditInput = { auditId: string; actorUserId: string; requestId?: string }
 
@@ -31,7 +31,6 @@ export type InitialPaymentData = {
 
 export type InitialReceiptData = {
   receiptId: string
-  receiptNumber: string
   items: Array<{
     id: string
     purchaseItemId: string
@@ -48,7 +47,17 @@ export class PurchasesRepository {
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(TenantContextService) private readonly tenantContext: TenantContextService,
     @Inject(IdService) private readonly ids: IdService,
+    @Inject(DocumentNumberService) private readonly documentNumbers: DocumentNumberService,
+    @Inject(StockLedgerRepository) private readonly stockLedger: StockLedgerRepository,
   ) {}
+
+  /** Row-locks the purchase so concurrent receipts/payments serialize on it until commit. */
+  private async lockPurchase(tx: Prisma.TransactionClient, businessId: string, purchaseId: string) {
+    await tx.$queryRaw`
+      SELECT "id" FROM "purchases"
+       WHERE "business_id" = ${businessId}::uuid AND "id" = ${purchaseId}::uuid
+       FOR UPDATE`
+  }
 
   async listWarehouses() {
     const context = this.tenantContext.require()
@@ -285,7 +294,6 @@ export class PurchasesRepository {
 
   async create(input: {
     id: string
-    purchaseNumber: string
     supplierId: string
     branchId: string
     warehouseId: string
@@ -315,11 +323,12 @@ export class PurchasesRepository {
           ? PurchaseLifecycleStatus.RECEIVED
           : PurchaseLifecycleStatus.ORDERED
 
+        const now = new Date()
         const purchase = await tx.purchase.create({
           data: {
             id: input.id,
             businessId,
-            purchaseNumber: input.purchaseNumber,
+            purchaseNumber: await this.documentNumbers.next(tx, businessId, 'PO', now),
             supplierId: input.supplierId,
             branchId: input.branchId,
             warehouseId: input.warehouseId,
@@ -357,7 +366,7 @@ export class PurchasesRepository {
               businessId,
               purchaseId: purchase.id,
               warehouseId: input.warehouseId,
-              receiptNumber: input.initialReceipt.receiptNumber,
+              receiptNumber: await this.documentNumbers.next(tx, businessId, 'GR', now),
               receivedAt: new Date(),
               receivedByUserId: input.actorUserId,
               notes: 'Direct receipt upon purchase creation',
@@ -373,49 +382,19 @@ export class PurchasesRepository {
             },
           })
 
-          for (const item of input.initialReceipt.items) {
-            const existingBalance = await tx.stockBalance.findFirst({
-              where: {
-                businessId,
-                warehouseId: input.warehouseId,
-                variantId: item.variantId,
-              },
-            })
-
-            if (existingBalance) {
-              await tx.stockBalance.update({
-                where: { id: existingBalance.id },
-                data: {
-                  quantity: existingBalance.quantity.add(item.receivedQuantity),
-                  version: { increment: 1 },
-                },
-              })
-            } else {
-              await tx.stockBalance.create({
-                data: {
-                  id: this.ids.generate(),
-                  businessId,
-                  warehouseId: input.warehouseId,
-                  variantId: item.variantId,
-                  quantity: item.receivedQuantity,
-                  version: 1,
-                },
-              })
-            }
-
-            await tx.stockMovement.create({
-              data: {
-                id: item.stockMovementId,
-                businessId,
-                warehouseId: input.warehouseId,
-                variantId: item.variantId,
-                type: StockMovementType.PURCHASE_RECEIPT,
-                quantityDelta: item.receivedQuantity,
-                referenceType: 'GOODS_RECEIPT',
-                referenceId: goodsReceipt.id,
-                actorUserId: input.actorUserId,
-                notes: `Direct PO Receipt: ${purchase.purchaseNumber}`,
-              },
+          const receiptItems = [...input.initialReceipt.items].sort((a, b) => a.variantId.localeCompare(b.variantId))
+          for (const item of receiptItems) {
+            await this.stockLedger.increase(tx, {
+              businessId,
+              warehouseId: input.warehouseId,
+              variantId: item.variantId,
+              quantity: item.receivedQuantity,
+              type: StockMovementType.PURCHASE_RECEIPT,
+              referenceType: 'GOODS_RECEIPT',
+              referenceId: goodsReceipt.id,
+              actorUserId: input.actorUserId,
+              notes: `Direct PO Receipt: ${purchase.purchaseNumber}`,
+              movementId: item.stockMovementId,
             })
           }
         }
@@ -519,14 +498,12 @@ export class PurchasesRepository {
 
   async receiveGoods(input: {
     receiptId: string
-    receiptNumber: string
     purchaseId: string
     warehouseId?: string
     notes?: string
     items: Array<{
       id: string
       purchaseItemId: string
-      variantId: string
       receivedQuantity: Prisma.Decimal
       stockMovementId: string
     }>
@@ -534,6 +511,8 @@ export class PurchasesRepository {
     const { businessId } = this.tenantContext.require()
 
     return this.prisma.$transaction(async (tx) => {
+      // Lock before reading received quantities so two receipts cannot both pass the over-receipt check
+      await this.lockPurchase(tx, businessId, input.purchaseId)
       const purchase = await tx.purchase.findFirst({
         where: { businessId, id: input.purchaseId },
         include: { items: true },
@@ -560,7 +539,7 @@ export class PurchasesRepository {
           businessId,
           purchaseId: purchase.id,
           warehouseId,
-          receiptNumber: input.receiptNumber,
+          receiptNumber: await this.documentNumbers.next(tx, businessId, 'GR'),
           notes: input.notes?.trim() || null,
           receivedAt: new Date(),
           receivedByUserId: input.actorUserId,
@@ -576,7 +555,7 @@ export class PurchasesRepository {
         const remainingQty = purchaseItem.orderedQuantity.sub(purchaseItem.receivedQuantity)
         if (item.receivedQuantity.gt(remainingQty)) {
           throw errors.invalidReceiptQuantity(
-            `Received quantity ${item.receivedQuantity} exceeds remaining ordered quantity ${remainingQty}`,
+            `Received quantity ${item.receivedQuantity.toString()} exceeds remaining ordered quantity ${remainingQty.toString()}`,
           )
         }
 
@@ -587,7 +566,7 @@ export class PurchasesRepository {
             businessId,
             goodsReceiptId: goodsReceipt.id,
             purchaseItemId: purchaseItem.id,
-            variantId: item.variantId,
+            variantId: purchaseItem.variantId,
             receivedQuantity: item.receivedQuantity,
             unitCost: purchaseItem.unitCost,
           },
@@ -601,46 +580,19 @@ export class PurchasesRepository {
         })
         purchaseItem.receivedQuantity = newReceivedQty
 
-        // 3. Upsert StockBalance & update quantity
-        const existingBalance = await tx.stockBalance.findUnique({
-          where: { warehouseId_variantId: { warehouseId, variantId: item.variantId } },
-        })
-
-        if (existingBalance) {
-          await tx.stockBalance.update({
-            where: { id: existingBalance.id },
-            data: {
-              quantity: existingBalance.quantity.add(item.receivedQuantity),
-              version: { increment: 1 },
-            },
-          })
-        } else {
-          await tx.stockBalance.create({
-            data: {
-              id: this.ids.generate(),
-              businessId,
-              warehouseId,
-              variantId: item.variantId,
-              quantity: item.receivedQuantity,
-              version: 1,
-            },
-          })
-        }
-
-        // 4. Create immutable StockMovement (INV-001, PUR-003)
-        await tx.stockMovement.create({
-          data: {
-            id: item.stockMovementId,
-            businessId,
-            warehouseId,
-            variantId: item.variantId,
-            type: StockMovementType.PURCHASE_RECEIPT,
-            quantityDelta: item.receivedQuantity,
-            referenceType: 'GOODS_RECEIPT',
-            referenceId: goodsReceipt.id,
-            actorUserId: input.actorUserId,
-            notes: `PO: ${purchase.purchaseNumber}`,
-          },
+        // 3. Increase stock with its immutable StockMovement (INV-001, PUR-003); the variant
+        // always comes from the purchase line, never from the client
+        await this.stockLedger.increase(tx, {
+          businessId,
+          warehouseId,
+          variantId: purchaseItem.variantId,
+          quantity: item.receivedQuantity,
+          type: StockMovementType.PURCHASE_RECEIPT,
+          referenceType: 'GOODS_RECEIPT',
+          referenceId: goodsReceipt.id,
+          actorUserId: input.actorUserId,
+          notes: `PO: ${purchase.purchaseNumber}`,
+          movementId: item.stockMovementId,
         })
       }
 
@@ -690,6 +642,8 @@ export class PurchasesRepository {
     const { businessId } = this.tenantContext.require()
 
     return this.prisma.$transaction(async (tx) => {
+      // Lock so concurrent payments cannot both pass the remaining-debt check
+      await this.lockPurchase(tx, businessId, input.purchaseId)
       const purchase = await tx.purchase.findFirst({
         where: { businessId, id: input.purchaseId },
       })
@@ -700,7 +654,7 @@ export class PurchasesRepository {
       const remainingDebt = purchase.grandTotal.sub(purchase.paidAmount)
       if (input.amount.gt(remainingDebt)) {
         throw errors.invalidPaymentAmount(
-          `Payment amount ${input.amount} exceeds remaining debt ${remainingDebt}`,
+          `Payment amount ${input.amount.toString()} exceeds remaining debt ${remainingDebt.toString()}`,
         )
       }
 

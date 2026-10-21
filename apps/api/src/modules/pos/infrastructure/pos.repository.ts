@@ -10,8 +10,11 @@ import {
 } from '@prisma/client'
 import { errors } from '../../../common/errors/app.error'
 import { PrismaService } from '../../../core/database/prisma.service'
+import { DocumentNumberService } from '../../../core/documents/document-number.service'
+import { type IdempotencyClaim, IdempotencyService } from '../../../core/idempotency/idempotency.service'
 import { IdService } from '../../../core/ids/id.service'
 import { TenantContextService } from '../../../core/tenancy/tenant-context.service'
+import { StockLedgerRepository } from '../../inventory/infrastructure/stock-ledger.repository'
 import type {
   CashMovementDto,
   CloseSessionDto,
@@ -60,6 +63,9 @@ export class PosRepository {
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(TenantContextService) private readonly tenantContext: TenantContextService,
     @Inject(IdService) private readonly ids: IdService,
+    @Inject(DocumentNumberService) private readonly documentNumbers: DocumentNumberService,
+    @Inject(IdempotencyService) private readonly idempotency: IdempotencyService,
+    @Inject(StockLedgerRepository) private readonly stockLedger: StockLedgerRepository,
   ) {}
 
   async ensureDefaultRegister(branchId: string) {
@@ -243,24 +249,15 @@ export class PosRepository {
     }
 
     const now = new Date()
-    const yearMonth = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`
-    const countThisMonth = await this.prisma.posSession.count({
-      where: {
-        businessId,
-        sessionNumber: { startsWith: `SHIFT-${yearMonth}-` },
-      },
-    })
-    const sessionNumber = `SHIFT-${yearMonth}-${String(countThisMonth + 1).padStart(4, '0')}`
-
     const openingCash = new Prisma.Decimal(dto.openingCash || '0')
 
-    const session = await this.prisma.posSession.create({
+    const session = await this.prisma.$transaction(async tx => tx.posSession.create({
       data: {
         id: this.ids.generate(),
         businessId,
         branchId: dto.branchId,
         registerId,
-        sessionNumber,
+        sessionNumber: await this.documentNumbers.next(tx, businessId, 'SHIFT', now),
         status: PosSessionStatus.OPEN,
         openedAt: now,
         openedByUserId: userId,
@@ -271,7 +268,7 @@ export class PosRepository {
         branch: { select: { id: true, name: true, code: true } },
         register: { select: { id: true, name: true, code: true } },
       },
-    })
+    }))
 
     return {
       ...session,
@@ -556,7 +553,7 @@ export class PosRepository {
     })
   }
 
-  async createSale(cashierUserId: string, dto: CreateSaleDto) {
+  async createSale(cashierUserId: string, dto: CreateSaleDto, idempotency?: IdempotencyClaim) {
     const { businessId } = this.tenantContext.require()
 
     // 1. Validate session
@@ -654,7 +651,7 @@ export class PosRepository {
 
     // 4. Calculate Financials strictly using Decimal (MON-001, MON-003)
     let computedSubtotal = new Prisma.Decimal(0)
-    let totalDiscount = new Prisma.Decimal(dto.discountAmount || '0')
+    const totalDiscount = new Prisma.Decimal(dto.discountAmount || '0')
 
     const preparedItems = dto.items.map(item => {
       const variant = variantMap.get(item.variantId)!
@@ -752,20 +749,17 @@ export class PosRepository {
       paymentStatus = SalePaymentStatus.PARTIALLY_PAID
     }
 
-    // 5. Generate Sale Number: INV-YYYYMM-XXXX
     const now = new Date()
-    const yearMonth = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`
-    const countThisMonth = await this.prisma.sale.count({
-      where: {
-        businessId,
-        saleNumber: { startsWith: `INV-${yearMonth}-` },
-      },
-    })
-    const saleNumber = `INV-${yearMonth}-${String(countThisMonth + 1).padStart(4, '0')}`
     const saleId = this.ids.generate()
 
-    // 6. Execute atomic database transaction (Rule 9: Critical operations must use database transactions)
+    // 5. Execute atomic database transaction (Rule 9: Critical operations must use database transactions)
     return this.prisma.$transaction(async tx => {
+      // Claim first so a concurrent retry with the same key waits here instead of selling twice
+      if (idempotency) await this.idempotency.claim(tx, idempotency, saleId)
+
+      // Sale Number INV-YYYYMM-XXXX, issued inside the transaction so concurrent sales never collide
+      const saleNumber = await this.documentNumbers.next(tx, businessId, 'INV', now)
+
       // Create Sale Header
       const sale = await tx.sale.create({
         data: {
@@ -793,7 +787,7 @@ export class PosRepository {
         },
       })
 
-      // Create Sale Items & Deduct Stock
+      // Create Sale Items
       for (const item of preparedItems) {
         await tx.saleItem.create({
           data: {
@@ -815,45 +809,25 @@ export class PosRepository {
             isPromoGift: item.isPromoGift,
           },
         })
+      }
 
-        // Check & Deduct Inventory (Rule 8: Every inventory change must create a stock movement)
-        if (item.trackStock) {
-          const balance = await tx.stockBalance.findUnique({
-            where: { warehouseId_variantId: { warehouseId, variantId: item.variantId } },
-          })
-
-          if (!balance || balance.quantity.lt(item.quantity)) {
-            const available = balance ? balance.quantity.toString() : '0'
-            throw errors.insufficientStock(
-              `ສິນຄ້າ "${item.productName}" ມີຈຳນວນໃນສາງບໍ່ພໍ (ມີພຽງ ${available}, ຕ້ອງການ ${item.quantity})`,
-            )
-          }
-
-          // Decrement stock balance atomically
-          await tx.stockBalance.update({
-            where: { id: balance.id },
-            data: {
-              quantity: balance.quantity.sub(item.quantity),
-              version: { increment: 1 },
-            },
-          })
-
-          // Create Stock Movement
-          await tx.stockMovement.create({
-            data: {
-              id: this.ids.generate(),
-              businessId,
-              warehouseId,
-              variantId: item.variantId,
-              type: StockMovementType.SALE,
-              quantityDelta: item.quantity.negated(),
-              referenceType: 'SALE',
-              referenceId: sale.id,
-              actorUserId: cashierUserId,
-              notes: `ຂາຍໜ້າຮ້ານເລກທີ: ${saleNumber}`,
-            },
-          })
-        }
+      // Deduct stock in variant order so concurrent sales lock balance rows in the same sequence
+      const stockItems = preparedItems
+        .filter(item => item.trackStock)
+        .sort((a, b) => a.variantId.localeCompare(b.variantId))
+      for (const item of stockItems) {
+        await this.stockLedger.decrease(tx, {
+          businessId,
+          warehouseId,
+          variantId: item.variantId,
+          quantity: item.quantity,
+          type: StockMovementType.SALE,
+          referenceType: 'SALE',
+          referenceId: sale.id,
+          actorUserId: cashierUserId,
+          notes: `ຂາຍໜ້າຮ້ານເລກທີ: ${saleNumber}`,
+          itemLabel: item.productName,
+        })
       }
 
       // Create Payments

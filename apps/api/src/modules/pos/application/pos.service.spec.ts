@@ -1,7 +1,10 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PosService } from './pos.service'
 import type { PosRepository } from '../infrastructure/pos.repository'
-import { CashMovementType, PaymentMethod, PosSessionStatus } from '@prisma/client'
+import { CashMovementType, PaymentMethod, PosSessionStatus, Prisma } from '@prisma/client'
+import type { PrismaService } from '../../../core/database/prisma.service'
+import { IdempotencyService } from '../../../core/idempotency/idempotency.service'
+import type { TenantContextService } from '../../../core/tenancy/tenant-context.service'
 
 describe('PosService (POS-001, POS-002, POS-003, MON-001)', () => {
   const repository = {
@@ -19,7 +22,16 @@ describe('PosService (POS-001, POS-002, POS-003, MON-001)', () => {
     getSaleById: vi.fn(),
   } as unknown as PosRepository
 
-  const service = new PosService(repository)
+  const idempotencyRecords = { findUnique: vi.fn(), deleteMany: vi.fn() }
+  const prisma = { idempotencyRecord: idempotencyRecords } as unknown as PrismaService
+  const tenantContext = { require: () => ({ businessId: 'business-1' }) } as unknown as TenantContextService
+  const idempotency = new IdempotencyService(prisma, tenantContext)
+
+  const service = new PosService(repository, idempotency)
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
 
   it('delegates openSession to repository', async () => {
     const mockSession = {
@@ -114,5 +126,74 @@ describe('PosService (POS-001, POS-002, POS-003, MON-001)', () => {
     const result = await service.createSale('cashier-1', saleDto)
     expect(repository.createSale).toHaveBeenCalledWith('cashier-1', saleDto)
     expect(result).toEqual(mockSale)
+  })
+
+  describe('Idempotency-Key on createSale', () => {
+    const saleDto = {
+      branchId: 'branch-1',
+      items: [{ variantId: 'v-1', quantity: '1' }],
+    }
+    const storedRecord = (requestHash: string) => ({
+      resourceId: 'sale-original',
+      requestHash,
+      expiresAt: new Date(Date.now() + 60_000),
+    })
+    const hashOf = (dto: unknown) => idempotency.prepare('pos.sale.create', 'retry-key-0001', dto)!.requestHash
+
+    it('passes the claim to the repository on the first attempt', async () => {
+      idempotencyRecords.findUnique.mockResolvedValue(null)
+      vi.mocked(repository.createSale).mockResolvedValue({ id: 'sale-1' } as never)
+
+      await service.createSale('cashier-1', saleDto, 'retry-key-0001')
+
+      expect(repository.createSale).toHaveBeenCalledWith('cashier-1', saleDto, {
+        operation: 'pos.sale.create',
+        key: 'retry-key-0001',
+        requestHash: hashOf(saleDto),
+      })
+    })
+
+    it('returns the original sale on retry without selling again', async () => {
+      idempotencyRecords.findUnique.mockResolvedValue(storedRecord(hashOf(saleDto)))
+      vi.mocked(repository.getSaleById).mockResolvedValue({ id: 'sale-original' } as never)
+
+      const result = await service.createSale('cashier-1', { ...saleDto }, 'retry-key-0001')
+
+      expect(repository.createSale).not.toHaveBeenCalled()
+      expect(result).toEqual({ id: 'sale-original' })
+    })
+
+    it('rejects a reused key with a different payload', async () => {
+      idempotencyRecords.findUnique.mockResolvedValue(storedRecord(hashOf(saleDto)))
+
+      await expect(
+        service.createSale('cashier-1', { ...saleDto, items: [{ variantId: 'v-1', quantity: '2' }] }, 'retry-key-0001'),
+      ).rejects.toMatchObject({ code: 'IDEMPOTENCY_KEY_REUSED', statusCode: 409 })
+      expect(repository.createSale).not.toHaveBeenCalled()
+    })
+
+    it('returns the winner when a concurrent duplicate loses the claim race', async () => {
+      idempotencyRecords.findUnique
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(storedRecord(hashOf(saleDto)))
+      vi.mocked(repository.createSale).mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+          code: 'P2002',
+          clientVersion: 'test',
+          meta: { modelName: 'IdempotencyRecord' },
+        }),
+      )
+      vi.mocked(repository.getSaleById).mockResolvedValue({ id: 'sale-original' } as never)
+
+      const result = await service.createSale('cashier-1', saleDto, 'retry-key-0001')
+
+      expect(result).toEqual({ id: 'sale-original' })
+    })
+
+    it('rejects malformed keys', async () => {
+      await expect(service.createSale('cashier-1', saleDto, 'bad key!')).rejects.toMatchObject({
+        code: 'INVALID_IDEMPOTENCY_KEY',
+      })
+    })
   })
 })

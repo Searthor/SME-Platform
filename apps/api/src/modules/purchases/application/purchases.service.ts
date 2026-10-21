@@ -42,17 +42,6 @@ export class PurchasesService {
 
     if (!business) throw errors.resourceNotFound('Business')
 
-    // Generate PO Number: PO-YYYYMM-XXXX
-    const now = new Date()
-    const yearMonth = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`
-    const countThisMonth = await this.prisma.purchase.count({
-      where: {
-        businessId,
-        purchaseNumber: { startsWith: `PO-${yearMonth}-` },
-      },
-    })
-    const purchaseNumber = `PO-${yearMonth}-${String(countThisMonth + 1).padStart(4, '0')}`
-
     // Calculate financials on backend using Decimal (MON-001, MON-003)
     let grandSubtotal = new Prisma.Decimal(0)
     let grandTax = new Prisma.Decimal(0)
@@ -82,17 +71,8 @@ export class PurchasesService {
 
     let initialReceipt: InitialReceiptData | undefined
     if (dto.receiveImmediately) {
-      const countGr = await this.prisma.goodsReceipt.count({
-        where: {
-          businessId,
-          receiptNumber: { startsWith: `GR-${yearMonth}-` },
-        },
-      })
-      const receiptNumber = `GR-${yearMonth}-${String(countGr + 1).padStart(4, '0')}`
-
       initialReceipt = {
         receiptId: this.ids.generate(),
-        receiptNumber,
         items: items.map(item => ({
           id: this.ids.generate(),
           purchaseItemId: item.id,
@@ -127,7 +107,6 @@ export class PurchasesService {
 
     return this.repository.create({
       id: this.ids.generate(),
-      purchaseNumber,
       supplierId: dto.supplierId,
       branchId: dto.branchId,
       warehouseId: dto.warehouseId,
@@ -155,31 +134,16 @@ export class PurchasesService {
     })
   }
 
-  async receiveGoods(actorUserId: string, purchaseId: string, dto: ReceiveGoodsDto, requestId?: string) {
-    const { businessId } = this.tenantContext.require()
-
-    // Generate Receipt Number: GR-YYYYMM-XXXX
-    const now = new Date()
-    const yearMonth = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`
-    const countThisMonth = await this.prisma.goodsReceipt.count({
-      where: {
-        businessId,
-        receiptNumber: { startsWith: `GR-${yearMonth}-` },
-      },
-    })
-    const receiptNumber = `GR-${yearMonth}-${String(countThisMonth + 1).padStart(4, '0')}`
-
+  receiveGoods(actorUserId: string, purchaseId: string, dto: ReceiveGoodsDto, requestId?: string) {
     const items = dto.items.map(item => ({
       id: this.ids.generate(),
       purchaseItemId: item.purchaseItemId,
-      variantId: item.variantId,
       receivedQuantity: new Prisma.Decimal(item.receivedQuantity),
       stockMovementId: this.ids.generate(),
     }))
 
     return this.repository.receiveGoods({
       receiptId: this.ids.generate(),
-      receiptNumber,
       purchaseId,
       items,
       auditId: this.ids.generate(),
