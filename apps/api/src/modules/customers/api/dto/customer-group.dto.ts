@@ -70,7 +70,6 @@ export class CustomerGroupQueryDto {
   active?: boolean
 }
 
-const MONEY_PATTERN = /^\d{1,16}(?:\.\d{1,4})?$/
 
 export class GroupProductPriceItemDto {
   @IsString()

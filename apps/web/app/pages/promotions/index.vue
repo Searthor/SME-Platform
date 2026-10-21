@@ -7,7 +7,6 @@ import { formatMoney, formatMoneyInput, sanitizeDecimalInput } from '~/utils/mon
 useHead({ title: 'ຈັດການໂປຣໂມຊັ່ນ (Promotions)' })
 
 const api = useApiClient()
-const auth = useAuthStore()
 const toast = useToast()
 
 // State
@@ -16,7 +15,6 @@ const totalPromotions = ref(0)
 const loading = ref(true)
 const saving = ref(false)
 const errorMessage = ref('')
-const successMessage = ref('')
 
 // Delete confirmation modal state
 const showDeleteConfirm = ref(false)
@@ -164,15 +162,6 @@ const filteredCatalogProducts = computed(() => {
   )
 })
 
-const toggleProductSelection = (productId: string) => {
-  const idx = form.selectedProductIds.indexOf(productId)
-  if (idx > -1) {
-    form.selectedProductIds.splice(idx, 1)
-  } else {
-    form.selectedProductIds.push(productId)
-  }
-}
-
 const selectAllFilteredProducts = () => {
   for (const p of filteredCatalogProducts.value) {
     if (!form.selectedProductIds.includes(p.id)) {
@@ -183,15 +172,6 @@ const selectAllFilteredProducts = () => {
 
 const clearProductSelection = () => {
   form.selectedProductIds = []
-}
-
-const toggleCategorySelection = (categoryId: string) => {
-  const idx = form.selectedCategoryIds.indexOf(categoryId)
-  if (idx > -1) {
-    form.selectedCategoryIds.splice(idx, 1)
-  } else {
-    form.selectedCategoryIds.push(categoryId)
-  }
 }
 
 const loadSupportData = async () => {

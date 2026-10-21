@@ -376,7 +376,7 @@ export class CustomersRepository {
   async createCustomer(dto: CreateCustomerDto) {
     const { businessId } = this.tenantContext.require()
 
-    let groupId: string | null = dto.groupId?.trim() || null
+    const groupId: string | null = dto.groupId?.trim() || null
     if (groupId) {
       const groupExists = await this.prisma.customerGroup.findFirst({
         where: { businessId, id: groupId },

@@ -290,7 +290,7 @@ const filteredBranches = computed(() => {
           <div class="rounded-2xl border border-line/60 bg-canvas/40 p-4">
             <span class="text-[0.68rem] font-bold text-slate-400 block mb-1">ຄວາມປອດໄພຂອງຂໍ້ມູນ</span>
             <span class="font-black text-slate-800 flex items-center gap-1.5">
-              <span class="size-2 rounded-full bg-emerald-500"></span>
+              <span class="size-2 rounded-full bg-emerald-500" />
               Tenant Isolated (RLS Encrypted)
             </span>
             <span class="mt-0.5 text-[0.68rem] text-slate-500 block">ແຍກຖານຂໍ້ມູນຕາມ TenantContext</span>

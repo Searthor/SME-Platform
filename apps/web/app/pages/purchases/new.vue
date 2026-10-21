@@ -1,9 +1,10 @@
 <script setup lang="ts">
+import { errorMessage } from '~/utils/errors'
+import type { ProductList } from '~/types/api'
 import FormattedNumberInput from '~/components/forms/FormattedNumberInput.vue'
 import Select2 from '~/components/forms/Select2.vue'
 
 const api = useApiClient()
-const auth = useAuthStore()
 const toast = useToast()
 
 definePageMeta({
@@ -96,7 +97,7 @@ const fetchInitialData = async () => {
       api.get<{ items: SupplierOption[] }>('/suppliers?limit=100'),
       api.get<WarehouseOption[]>('/warehouses'),
       api.get<BranchOption[]>('/branches'),
-      api.get<{ items: any[] }>('/products?limit=100'),
+      api.get<ProductList>('/products?limit=100'),
     ])
 
     suppliers.value = supRes.items
@@ -136,8 +137,8 @@ const fetchInitialData = async () => {
     // Add first row
     addItemRow()
   }
-  catch (err: any) {
-    toast.error('ຜິດພາດ', err.message || 'ບໍ່ສາມາດໂຫລດຂໍ້ມູນເລີ່ມຕົ້ນໄດ້')
+  catch (err) {
+    toast.error('ຜິດພາດ', errorMessage(err, 'ບໍ່ສາມາດໂຫລດຂໍ້ມູນເລີ່ມຕົ້ນໄດ້'))
   }
   finally {
     loading.value = false
@@ -162,8 +163,8 @@ const removeItemRow = (index: number) => {
   form.items.splice(index, 1)
 }
 
-const onVariantChange = (row: OrderItemRow, val?: string | number | null) => {
-  if (val !== undefined && val !== null) {
+const onVariantChange = (row: OrderItemRow, val?: string | number | Array<string | number> | null) => {
+  if (val !== undefined && val !== null && !Array.isArray(val)) {
     row.variantId = String(val)
   }
   const selected = variants.value.find(v => v.id === row.variantId)
@@ -270,8 +271,8 @@ const submitPO = async () => {
     toast.success('ສ້າງໃບສັ່ງຊື້ສຳເລັດ', 'ສ້າງໃບສັ່ງຊື້ສິນຄ້າຮຽບຮ້ອຍແລ້ວ')
     await navigateTo(`/purchases/${created.id}`)
   }
-  catch (err: any) {
-    toast.error('ຜິດພາດ', err.message || 'ບໍ່ສາມາດສ້າງໃບສັ່ງຊື້ໄດ້')
+  catch (err) {
+    toast.error('ຜິດພາດ', errorMessage(err, 'ບໍ່ສາມາດສ້າງໃບສັ່ງຊື້ໄດ້'))
   }
   finally {
     submitting.value = false

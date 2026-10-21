@@ -1,5 +1,7 @@
 <script setup lang="ts">
+import { errorMessage } from '~/utils/errors'
 import { formatMoney } from '~/utils/money'
+import type { PosSale, PosSaleList, PosSaleListItem, PosSessionList, PosSessionListItem, PosSessionSummary } from '~/types/api'
 
 definePageMeta({
   layout: 'default',
@@ -16,30 +18,30 @@ const activeTab = ref<'SALES' | 'SESSIONS'>('SALES')
 const loading = ref(true)
 
 // Sales data
-const sales = ref<any[]>([])
+const sales = ref<PosSaleListItem[]>([])
 const salesTotal = ref(0)
 const salesPage = ref(1)
 const salesLimit = ref(20)
 const salesSearch = ref('')
 
 // Sessions data
-const sessions = ref<any[]>([])
+const sessions = ref<PosSessionListItem[]>([])
 const sessionsTotal = ref(0)
 
 // View Details Modal
-const selectedSale = ref<any>(null)
-const selectedSessionSummary = ref<any>(null)
+const selectedSale = ref<PosSale | null>(null)
+const selectedSessionSummary = ref<PosSessionSummary | null>(null)
 const loadingDetail = ref(false)
 
 const fetchSales = async () => {
   loading.value = true
   try {
     const q = salesSearch.value.trim()
-    const res = await api.get<any>(`/pos/sales?page=${salesPage.value}&limit=${salesLimit.value}${q ? `&q=${encodeURIComponent(q)}` : ''}`)
+    const res = await api.get<PosSaleList>(`/pos/sales?page=${salesPage.value}&limit=${salesLimit.value}${q ? `&q=${encodeURIComponent(q)}` : ''}`)
     sales.value = res.items || []
     salesTotal.value = res.total || 0
-  } catch (err: any) {
-    toast.error('ຜິດພາດ', err.message || 'ບໍ່ສາມາດໂຫຼດປະຫວັດການຂາຍໄດ້')
+  } catch (err) {
+    toast.error('ຜິດພາດ', errorMessage(err, 'ບໍ່ສາມາດໂຫຼດປະຫວັດການຂາຍໄດ້'))
   } finally {
     loading.value = false
   }
@@ -48,11 +50,11 @@ const fetchSales = async () => {
 const fetchSessions = async () => {
   loading.value = true
   try {
-    const res = await api.get<any>('/pos/sessions?limit=50')
+    const res = await api.get<PosSessionList>('/pos/sessions?limit=50')
     sessions.value = res.items || []
     sessionsTotal.value = res.total || 0
-  } catch (err: any) {
-    toast.error('ຜິດພາດ', err.message || 'ບໍ່ສາມາດໂຫຼດປະຫວັດກະຂາຍໄດ້')
+  } catch (err) {
+    toast.error('ຜິດພາດ', errorMessage(err, 'ບໍ່ສາມາດໂຫຼດປະຫວັດກະຂາຍໄດ້'))
   } finally {
     loading.value = false
   }
@@ -70,10 +72,10 @@ const onTabChange = (tab: 'SALES' | 'SESSIONS') => {
 const viewSaleDetails = async (saleId: string) => {
   loadingDetail.value = true
   try {
-    const sale = await api.get<any>(`/pos/sales/${saleId}`)
+    const sale = await api.get<PosSale>(`/pos/sales/${saleId}`)
     selectedSale.value = sale
-  } catch (err: any) {
-    toast.error('ຜິດພາດ', err.message || 'ບໍ່ສາມາດດຶງລາຍລະອຽດໃບບິນໄດ້')
+  } catch (err) {
+    toast.error('ຜິດພາດ', errorMessage(err, 'ບໍ່ສາມາດດຶງລາຍລະອຽດໃບບິນໄດ້'))
   } finally {
     loadingDetail.value = false
   }
@@ -82,10 +84,10 @@ const viewSaleDetails = async (saleId: string) => {
 const viewSessionSummary = async (sessionId: string) => {
   loadingDetail.value = true
   try {
-    const summary = await api.get<any>(`/pos/sessions/${sessionId}/summary`)
+    const summary = await api.get<PosSessionSummary>(`/pos/sessions/${sessionId}/summary`)
     selectedSessionSummary.value = summary
-  } catch (err: any) {
-    toast.error('ຜິດພາດ', err.message || 'ບໍ່ສາມາດດຶງລາຍງານກະຂາຍໄດ້')
+  } catch (err) {
+    toast.error('ຜິດພາດ', errorMessage(err, 'ບໍ່ສາມາດດຶງລາຍງານກະຂາຍໄດ້'))
   } finally {
     loadingDetail.value = false
   }

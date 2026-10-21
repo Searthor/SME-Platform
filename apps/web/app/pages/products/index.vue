@@ -1,3 +1,4 @@
+<script setup lang="ts">
 import { ApiClientError } from '~/services/api-client'
 import type { CatalogCategory, CatalogUnit, CustomerGroup, GroupBoundProduct, Product, ProductList } from '~/types/api'
 import type { TabItem } from '~/types/ui'
@@ -298,7 +299,7 @@ const fetchPriceGroups = async () => {
   try {
     const res = await api.get<CustomerGroup[]>('/price-groups')
     priceGroups.value = res || []
-  } catch (err: any) {
+  } catch (err) {
     console.error('Failed to load price groups:', err)
   } finally {
     loadingPriceGroups.value = false
@@ -388,7 +389,7 @@ const openBindPricesModal = async (group: CustomerGroup) => {
       unitName: bp.unitName,
       categoryName: bp.categoryName,
     }))
-  } catch (err: any) {
+  } catch (err) {
     errorMessage.value = messageFrom(err)
   } finally {
     loadingBoundGroupProducts.value = false
@@ -501,7 +502,7 @@ const saveBoundGroupPrices = async () => {
     successMessage.value = `ບັນທຶກລາຄາສິນຄ້າສຳລັບກຸ່ມ "${selectedPriceGroupForBinding.value.name}" ຮຽບຮ້ອຍແລ້ວ`
     showBindPricesModal.value = false
     await fetchPriceGroups()
-  } catch (err: any) {
+  } catch (err) {
     errorMessage.value = messageFrom(err)
   } finally {
     savingBoundGroupProducts.value = false

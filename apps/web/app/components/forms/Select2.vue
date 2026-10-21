@@ -46,13 +46,16 @@ const props = withDefaults(defineProps<{
   size: 'md',
 })
 
+type SelectScalar = string | number
+type SelectModel = SelectScalar | SelectScalar[] | null | undefined
+
 const emit = defineEmits<{
-  (e: 'change', value: any): void
+  (e: 'change', value: SelectModel): void
 }>()
 
 const { t } = useI18n()
 
-const model = defineModel<any>({ default: '' })
+const model = defineModel<SelectModel>({ default: '' })
 
 const id = useId()
 const isOpen = ref(false)
@@ -110,7 +113,7 @@ const filteredOptions = computed(() => {
 
 const isSelected = (val: string | number) => {
   if (props.multiple) {
-    return Array.isArray(model.value) && model.value.some((v: any) => String(v) === String(val))
+    return Array.isArray(model.value) && model.value.some((v: SelectScalar) => String(v) === String(val))
   }
   return String(model.value ?? '') === String(val)
 }
@@ -123,9 +126,10 @@ const selectedOption = computed(() => {
 
 // Current selected options list for multiple mode
 const selectedOptionsList = computed(() => {
-  if (!props.multiple || !Array.isArray(model.value)) return []
+  const selected = model.value
+  if (!props.multiple || !Array.isArray(selected)) return []
   return normalizedOptions.value.filter((opt) =>
-    model.value.some((v: any) => String(v) === String(opt.value))
+    selected.some((v: SelectScalar) => String(v) === String(opt.value))
   )
 })
 
@@ -161,7 +165,7 @@ function selectOption(option: Select2Option) {
   if (option.disabled) return
   if (props.multiple) {
     const arr = Array.isArray(model.value) ? [...model.value] : []
-    const idx = arr.findIndex((v: any) => String(v) === String(option.value))
+    const idx = arr.findIndex((v: SelectScalar) => String(v) === String(option.value))
     if (idx > -1) {
       arr.splice(idx, 1)
     } else {
@@ -179,7 +183,7 @@ function selectOption(option: Select2Option) {
 function removeOption(val: string | number, e?: MouseEvent) {
   e?.stopPropagation()
   if (!props.multiple || !Array.isArray(model.value)) return
-  const arr = model.value.filter((v: any) => String(v) !== String(val))
+  const arr = model.value.filter((v: SelectScalar) => String(v) !== String(val))
   model.value = arr
   emit('change', arr)
 }

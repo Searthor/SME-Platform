@@ -1,11 +1,10 @@
 import { Inject, Injectable } from '@nestjs/common'
-import { Prisma } from '@prisma/client'
+import { Prisma, PromotionType as PrismaPromotionType } from '@prisma/client'
 import {
   CreatePromotionDto,
   EvaluatePromotionDto,
   PromotionQueryDto,
   PromotionRewardType,
-  PromotionType,
   UpdatePromotionDto,
 } from '../api/dto/promotion.dto'
 import { PromotionsRepository } from '../infrastructure/promotions.repository'
@@ -84,7 +83,7 @@ export class PromotionsService {
 
     // Process each active promotion
     for (const promo of activePromos) {
-      if (promo.type === PromotionType.BILL_TOTAL) {
+      if (promo.type === PrismaPromotionType.BILL_TOTAL) {
         const minAmt = new Prisma.Decimal(promo.minAmount)
         if (subtotal.gte(minAmt)) {
           let disc = new Prisma.Decimal(0)
@@ -109,7 +108,7 @@ export class PromotionsService {
             })
           }
         }
-      } else if (promo.type === PromotionType.BUY_X_GET_Y) {
+      } else if (promo.type === PrismaPromotionType.BUY_X_GET_Y) {
         // Buy X Get Y Free (same product/variant/unit)
         for (const item of dto.items) {
           const isTarget = this.itemMatchesPromoTarget(item, promo.items)
@@ -131,12 +130,12 @@ export class PromotionsService {
                 code: promo.code,
                 type: promo.type,
                 discountAmount: itemDiscount.toFixed(4),
-                description: `ຊື້ ${promo.minQuantity} ແຖມ ${freeQty.toString()}`,
+                description: `ຊື້ ${promo.minQuantity.toString()} ແຖມ ${freeQty.toString()}`,
               })
             }
           }
         }
-      } else if (promo.type === PromotionType.BUNDLE_CROSS) {
+      } else if (promo.type === PrismaPromotionType.BUNDLE_CROSS) {
         // Buy Item A, get Item B free / discounted
         let triggerCount = 0
         for (const item of dto.items) {
@@ -170,7 +169,7 @@ export class PromotionsService {
             description: `ແຖມຟຣີ ${rewardTotalQty.toString()} ລາຍການ`,
           })
         }
-      } else if (promo.type === PromotionType.DISCOUNT) {
+      } else if (promo.type === PrismaPromotionType.DISCOUNT) {
         // Time-based or item-based percentage or fixed discount
         for (const item of dto.items) {
           if (promo.items.length > 0 && !this.itemMatchesPromoTarget(item, promo.items)) {

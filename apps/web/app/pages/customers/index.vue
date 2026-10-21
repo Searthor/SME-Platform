@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { errorMessage } from '~/utils/errors'
 import type { Customer, CustomerGroup, CustomerList, GroupBoundProduct, Product, ProductList } from '~/types/api'
 import type { TabItem } from '~/types/ui'
 import { formatMoney, sanitizeDecimalInput } from '~/utils/money'
@@ -82,8 +83,8 @@ const fetchGroups = async () => {
   try {
     const res = await api.get<CustomerGroup[]>('/customer-groups')
     groups.value = res
-  } catch (err: any) {
-    toast.error('ຜິດພາດ', err.message || 'ບໍ່ສາມາດດຶງຂໍ້ມູນກຸ່ມລູກຄ້າໄດ້')
+  } catch (err) {
+    toast.error('ຜິດພາດ', errorMessage(err, 'ບໍ່ສາມາດດຶງຂໍ້ມູນກຸ່ມລູກຄ້າໄດ້'))
   }
 }
 
@@ -99,8 +100,8 @@ const fetchCustomers = async () => {
     const res = await api.get<CustomerList>(`/customers?${params.toString()}`)
     customers.value = res.items
     totalCustomers.value = res.total
-  } catch (err: any) {
-    toast.error('ຜິດພາດ', err.message || 'ບໍ່ສາມາດດຶງຂໍ້ມູນລູກຄ້າໄດ້')
+  } catch (err) {
+    toast.error('ຜິດພາດ', errorMessage(err, 'ບໍ່ສາມາດດຶງຂໍ້ມູນລູກຄ້າໄດ້'))
   } finally {
     loading.value = false
   }
@@ -172,8 +173,8 @@ const submitCustomer = async () => {
     }
     showCustomerModal.value = false
     await fetchCustomers()
-  } catch (err: any) {
-    toast.error('ຜິດພາດ', err.message || 'ບໍ່ສາມາດບັນທຶກຂໍ້ມູນລູກຄ້າໄດ້')
+  } catch (err) {
+    toast.error('ຜິດພາດ', errorMessage(err, 'ບໍ່ສາມາດບັນທຶກຂໍ້ມູນລູກຄ້າໄດ້'))
   } finally {
     saving.value = false
   }
@@ -185,8 +186,8 @@ const deleteCustomer = async (c: Customer) => {
     await api.delete(`/customers/${c.id}`)
     toast.success('ສຳເລັດ', 'ລຶບ/ປິດການໃຊ້ງານລູກຄ້າຮຽບຮ້ອຍແລ້ວ')
     await fetchCustomers()
-  } catch (err: any) {
-    toast.error('ຜິດພາດ', err.message || 'ບໍ່ສາມາດລຶບລູກຄ້າໄດ້')
+  } catch (err) {
+    toast.error('ຜິດພາດ', errorMessage(err, 'ບໍ່ສາມາດລຶບລູກຄ້າໄດ້'))
   }
 }
 
@@ -237,8 +238,8 @@ const submitGroup = async () => {
     }
     showGroupModal.value = false
     await fetchGroups()
-  } catch (err: any) {
-    toast.error('ຜິດພາດ', err.message || 'ບໍ່ສາມາດບັນທຶກກຸ່ມລູກຄ້າໄດ້')
+  } catch (err) {
+    toast.error('ຜິດພາດ', errorMessage(err, 'ບໍ່ສາມາດບັນທຶກກຸ່ມລູກຄ້າໄດ້'))
   } finally {
     saving.value = false
   }
@@ -250,8 +251,8 @@ const deleteGroup = async (g: CustomerGroup) => {
     await api.delete(`/customer-groups/${g.id}`)
     toast.success('ສຳເລັດ', 'ລຶບກຸ່ມລູກຄ້າຮຽບຮ້ອຍແລ້ວ')
     await fetchGroups()
-  } catch (err: any) {
-    toast.error('ຜິດພາດ', err.message || 'ບໍ່ສາມາດລຶບກຸ່ມລູກຄ້າໄດ້')
+  } catch (err) {
+    toast.error('ຜິດພາດ', errorMessage(err, 'ບໍ່ສາມາດລຶບກຸ່ມລູກຄ້າໄດ້'))
   }
 }
 
@@ -285,8 +286,8 @@ const openBindProductsModal = async (g: CustomerGroup) => {
     if (catalogRes) {
       catalogProducts.value = catalogRes.items || []
     }
-  } catch (err: any) {
-    toast.error('ຜິດພາດ', err.message || 'ບໍ່ສາມາດໂຫຼດຂໍ້ມູນສິນຄ້າຂອງກຸ່ມໄດ້')
+  } catch (err) {
+    toast.error('ຜິດພາດ', errorMessage(err, 'ບໍ່ສາມາດໂຫຼດຂໍ້ມູນສິນຄ້າຂອງກຸ່ມໄດ້'))
   } finally {
     loadingBoundProducts.value = false
   }
@@ -382,8 +383,8 @@ const saveBoundProducts = async () => {
     toast.success('ສຳເລັດ', `ບັນທຶກລາຄາສິນຄ້າສຳລັບກຸ່ມ "${selectedGroupForBinding.value.name}" ຮຽບຮ້ອຍແລ້ວ`)
     showBindProductsModal.value = false
     await fetchGroups()
-  } catch (err: any) {
-    toast.error('ຜິດພາດ', err.message || 'ບໍ່ສາມາດບັນທຶກລາຄາສິນຄ້າໄດ້')
+  } catch (err) {
+    toast.error('ຜິດພາດ', errorMessage(err, 'ບໍ່ສາມາດບັນທຶກລາຄາສິນຄ້າໄດ້'))
   } finally {
     savingBoundProducts.value = false
   }

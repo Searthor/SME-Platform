@@ -19,4 +19,9 @@ export default tseslint.config(
       '@typescript-eslint/no-floating-promises': 'error',
     },
   },
+  {
+    // expect(repository.method) on vi.fn() mocks is the intended pattern in tests
+    files: ['**/*.spec.ts', '**/*.e2e-spec.ts', '**/*.integration-spec.ts'],
+    rules: { '@typescript-eslint/unbound-method': 'off' },
+  },
 )

@@ -386,3 +386,111 @@ export type CartEvaluationResult = {
   totalDiscount: string
 }
 
+
+type RefSummary = { id: string; name: string; code: string }
+export type SalePaymentMethod = 'CASH' | 'BANK_TRANSFER' | 'OTHER'
+
+export type PosSaleListItem = {
+  id: string
+  saleNumber: string
+  branchId: string
+  branch: RefSummary
+  warehouseId: string
+  warehouse: RefSummary
+  customerName: string | null
+  currencyCode: string
+  subtotal: string
+  discountAmount: string
+  grandTotal: string
+  paidAmount: string
+  changeAmount: string
+  lifecycleStatus: 'COMPLETED' | 'CANCELLED'
+  paymentStatus: 'PAID' | 'PARTIALLY_PAID' | 'UNPAID'
+  itemCount: number
+  payments: Array<{ method: SalePaymentMethod; amount: string }>
+  soldAt: string
+}
+
+export type PosSaleList = { items: PosSaleListItem[]; total: number; page: number; limit: number; totalPages: number }
+
+export type PosSale = Omit<PosSaleListItem, 'itemCount' | 'payments'> & {
+  sessionId: string | null
+  session: { id: string; sessionNumber: string; status: 'OPEN' | 'CLOSED' } | null
+  customerId: string | null
+  cashierUserId: string
+  notes: string | null
+  items: Array<{
+    id: string
+    variantId: string
+    productName: string
+    variantName: string | null
+    sku: string | null
+    unitName: string
+    quantity: string
+    unitCost: string
+    unitPrice: string
+    discountAmount: string
+    subtotal: string
+    totalAmount: string
+  }>
+  payments: Array<{
+    id: string
+    method: SalePaymentMethod
+    amount: string
+    tenderedAmount: string | null
+    changeAmount: string | null
+    reference: string | null
+    paidAt: string
+  }>
+}
+
+export type PosSessionListItem = {
+  id: string
+  sessionNumber: string
+  branchId: string
+  branch: RefSummary
+  registerId: string
+  register: RefSummary
+  status: 'OPEN' | 'CLOSED'
+  openedAt: string
+  closedAt: string | null
+  openingCash: string
+  closingCashCount: string | null
+  expectedCash: string | null
+  cashDifference: string | null
+  totalSalesCount: number
+  totalNetSales: string
+  totalCashSales: string
+  totalBankSales: string
+  notes: string | null
+}
+
+export type PosSessionList = { items: PosSessionListItem[]; total: number; limit: number; offset: number }
+
+export type PosSessionSummary = {
+  sessionId: string
+  sessionNumber: string
+  status: 'OPEN' | 'CLOSED'
+  branch: { id: string; name: string }
+  register: { id: string; name: string; code: string }
+  openedBy: { id: string; name?: string }
+  closedBy?: { id: string; name?: string } | null
+  openedAt: string
+  closedAt?: string | null
+  openingCash: string
+  cashIn: string
+  cashOut: string
+  netCashMovements: string
+  salesCount: number
+  grossSales: string
+  totalDiscount: string
+  netSales: string
+  cashSales: string
+  bankSales: string
+  otherSales: string
+  expectedCash: string
+  closingCashCount?: string | null
+  cashDifference?: string | null
+  notes?: string | null
+  cashMovements: Array<{ id: string; type: 'CASH_IN' | 'CASH_OUT'; amount: string; reason: string; createdAt: string }>
+}

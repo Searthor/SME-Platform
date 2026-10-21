@@ -1,13 +1,14 @@
 <script setup lang="ts">
-import type { CartEvaluationResult, Customer, CustomerGroup, CustomerList } from '~/types/api'
+import { errorMessage } from '~/utils/errors'
+import type { CartEvaluationResult, Customer, CustomerGroup, CustomerList, PosSale, PosSessionSummary } from '~/types/api'
 import { formatMoney } from '~/utils/money'
+import { ApiClientError } from '~/services/api-client'
 
 useHead({
   title: 'ຂາຍສິນຄ້າ (POS) - SmeFlow POS',
 })
 
 const api = useApiClient()
-const auth = useAuthStore()
 const toast = useToast()
 
 // Types
@@ -66,6 +67,15 @@ type CartItem = {
   groupPrices?: Array<{ customerGroupId: string; price: string }>
 }
 
+type HeldOrder = {
+  id: string
+  table: string
+  customer: string
+  items: CartItem[]
+  time: string
+  total: number
+}
+
 // State
 const loading = ref(true)
 const branches = ref<Branch[]>([])
@@ -94,7 +104,7 @@ const selectedCategory = ref('ທັງໝົດ')
 // Cart & Order Options
 const cartTab = ref<'CURRENT' | 'HELD'>('CURRENT')
 const cart = ref<CartItem[]>([])
-const heldOrders = ref<any[]>([])
+const heldOrders = ref<HeldOrder[]>([])
 
 const customerName = ref('ລູກຄ້າທົ່ວໄປ')
 const selectedCustomer = ref<Customer | null>(null)
@@ -112,12 +122,10 @@ const savingQuickCustomer = ref(false)
 const selectedTable = ref('T01')
 const orderNotes = ref('')
 
-// Toggles for Discount, Delivery, VAT
-const showDiscountInput = ref(false)
+// Discount, Delivery, VAT
 const discountType = ref<'AMOUNT' | 'PERCENT'>('AMOUNT')
 const discountValue = ref<number>(0)
 
-const showDeliveryInput = ref(false)
 const deliveryFee = ref<number>(0)
 
 const applyVat = ref(false)
@@ -131,7 +139,7 @@ const completingSale = ref(false)
 
 // Receipt / Completed Sale Modal
 const receiptModal = ref(false)
-const completedSale = ref<any>(null)
+const completedSale = ref<PosSale | null>(null)
 
 // Cash In/Out Modal
 const cashMovementModal = ref(false)
@@ -148,21 +156,12 @@ const closeShiftForm = reactive({
   closingCashCount: '',
   notes: '',
 })
-const shiftSummary = ref<any>(null)
+const shiftSummary = ref<PosSessionSummary | null>(null)
 const loadingSummary = ref(false)
 const closingShift = ref(false)
 
 // Quick Add Product Modal
 const addProductModal = ref(false)
-const addProductForm = reactive({
-  name: '',
-  categoryName: 'ເຄື່ອງດື່ມ',
-  sellingPrice: '',
-  cost: '',
-  trackStock: true,
-  stockQty: '100',
-})
-const creatingProduct = ref(false)
 
 // Curated Photos Map
 const productImagesMap: Record<string, string> = {
@@ -358,7 +357,7 @@ const nonGiftCartKey = computed(() => {
     .join('|')
 })
 
-let promoTimer: any = null
+let promoTimer: ReturnType<typeof setTimeout> | null = null
 watch([nonGiftCartKey, selectedPriceGroupId, () => selectedCustomer.value?.id], () => {
   if (promoTimer) clearTimeout(promoTimer)
   promoTimer = setTimeout(() => {
@@ -459,8 +458,8 @@ const handleQuickAddCustomer = async () => {
     quickCustomerForm.phone = ''
     quickCustomerForm.groupId = ''
     isQuickAddingCustomer.value = false
-  } catch (err: any) {
-    toast.error('ຜິດພາດ', err.message || 'ບໍ່ສາມາດເພີ່ມລູກຄ້າໄດ້')
+  } catch (err) {
+    toast.error('ຜິດພາດ', errorMessage(err, 'ບໍ່ສາມາດເພີ່ມລູກຄ້າໄດ້'))
   } finally {
     savingQuickCustomer.value = false
   }
@@ -492,8 +491,8 @@ const fetchInitial = async () => {
       onBranchChange(),
       loadCustomersAndGroups(),
     ])
-  } catch (err: any) {
-    toast.error('ຜິດພາດ', err.message || 'ບໍ່ສາມາດໂຫຼດຂໍ້ມູນເລີ່ມຕົ້ນໄດ້')
+  } catch (err) {
+    toast.error('ຜິດພາດ', errorMessage(err, 'ບໍ່ສາມາດໂຫຼດຂໍ້ມູນເລີ່ມຕົ້ນໄດ້'))
   } finally {
     loading.value = false
   }
@@ -514,8 +513,8 @@ const onBranchChange = async () => {
     activeSession.value = curSession
 
     await loadProducts()
-  } catch (err: any) {
-    toast.error('ຜິດພາດ', err.message || 'ບໍ່ສາມາດກວດສອບກະຂາຍໄດ້')
+  } catch (err) {
+    toast.error('ຜິດພາດ', errorMessage(err, 'ບໍ່ສາມາດກວດສອບກະຂາຍໄດ້'))
   } finally {
     loadingSession.value = false
   }
@@ -531,8 +530,8 @@ const loadProducts = async () => {
       imageUrl: getProductImage(p.productName, p.categoryName),
       isRecommended: ['ເອັດເປຣສໂຊ່ນ້ຳເຢັນ', 'ຊາໄຂ່ມຸກ'].includes(p.productName),
     }))
-  } catch (err: any) {
-    toast.error('ຜິດພາດ', err.message || 'ບໍ່ສາມາດໂຫຼດລາຍການສິນຄ້າໄດ້')
+  } catch (err) {
+    toast.error('ຜິດພາດ', errorMessage(err, 'ບໍ່ສາມາດໂຫຼດລາຍການສິນຄ້າໄດ້'))
   } finally {
     loadingProducts.value = false
   }
@@ -556,8 +555,8 @@ const handleOpenShift = async () => {
     openShiftModal.value = false
     toast.success('ສຳເລັດ', `ເປີດກະຂາຍສຳເລັດແລ້ວ: ${session.sessionNumber}`)
     await loadProducts()
-  } catch (err: any) {
-    toast.error('ຜິດພາດ', err.message || 'ບໍ່ສາມາດເປີດກະຂາຍໄດ້')
+  } catch (err) {
+    toast.error('ຜິດພາດ', errorMessage(err, 'ບໍ່ສາມາດເປີດກະຂາຍໄດ້'))
   } finally {
     openingShift.value = false
   }
@@ -641,7 +640,7 @@ const holdOrder = () => {
   clearCart()
 }
 
-const restoreHeldOrder = (order: any) => {
+const restoreHeldOrder = (order: HeldOrder) => {
   cart.value = [...order.items]
   selectedTable.value = order.table
   customerName.value = order.customer
@@ -684,8 +683,16 @@ const openCheckout = (method?: 'CASH' | 'BANK_TRANSFER' | 'CARD' | 'OTHER') => {
   paymentMethod.value = method || 'CASH'
   tenderedAmount.value = formatMoney(cartGrandTotal.value)
   paymentReference.value = ''
+  pendingSaleKey = null
   checkoutModal.value = true
 }
+
+// Reused only while retrying a sale whose outcome is unknown (network failure or 5xx), so the
+// server returns the original sale instead of charging and deducting stock twice.
+let pendingSaleKey: string | null = null
+
+const isOutcomeUnknown = (err: unknown) =>
+  err instanceof ApiClientError && (err.code === 'NETWORK_ERROR' || (err.statusCode ?? 500) >= 500)
 
 const handleCompleteSale = async () => {
   if (cart.value.length === 0) return
@@ -732,7 +739,9 @@ const handleCompleteSale = async () => {
       ],
     }
 
-    const res = await api.post<any>('/pos/sales', payload)
+    pendingSaleKey ??= crypto.randomUUID()
+    const res = await api.post<PosSale>('/pos/sales', payload, { idempotencyKey: pendingSaleKey })
+    pendingSaleKey = null
     completedSale.value = res
     checkoutModal.value = false
     receiptModal.value = true
@@ -740,8 +749,9 @@ const handleCompleteSale = async () => {
 
     loadProducts()
     clearCart()
-  } catch (err: any) {
-    toast.error('ຜິດພາດ', err.message || 'ບໍ່ສາມາດບັນທຶກການຂາຍໄດ້')
+  } catch (err) {
+    if (!isOutcomeUnknown(err)) pendingSaleKey = null
+    toast.error('ຜິດພາດ', errorMessage(err, 'ບໍ່ສາມາດບັນທຶກການຂາຍໄດ້'))
   } finally {
     completingSale.value = false
   }
@@ -778,8 +788,8 @@ const handleCashMovement = async () => {
     cashMovementModal.value = false
     const cur = await api.get<PosSession>(`/pos/sessions/current?branchId=${selectedBranchId.value}`)
     activeSession.value = cur
-  } catch (err: any) {
-    toast.error('ຜິດພາດ', err.message || 'ບໍ່ສາມາດບັນທຶກການເຄື່ອນໄຫວເງິນສົດໄດ້')
+  } catch (err) {
+    toast.error('ຜິດພາດ', errorMessage(err, 'ບໍ່ສາມາດບັນທຶກການເຄື່ອນໄຫວເງິນສົດໄດ້'))
   } finally {
     submittingMovement.value = false
   }
@@ -793,11 +803,11 @@ const openCloseShift = async () => {
   closeShiftModal.value = true
   loadingSummary.value = true
   try {
-    const summary = await api.get<any>(`/pos/sessions/${activeSession.value.id}/summary`)
+    const summary = await api.get<PosSessionSummary>(`/pos/sessions/${activeSession.value.id}/summary`)
     shiftSummary.value = summary
     closeShiftForm.closingCashCount = formatMoney(summary.expectedCash)
-  } catch (err: any) {
-    toast.error('ຜິດພາດ', err.message || 'ບໍ່ສາມາດດຶງລາຍງານສະຫຼຸບຍອດກະໄດ້')
+  } catch (err) {
+    toast.error('ຜິດພາດ', errorMessage(err, 'ບໍ່ສາມາດດຶງລາຍງານສະຫຼຸບຍອດກະໄດ້'))
   } finally {
     loadingSummary.value = false
   }
@@ -808,7 +818,7 @@ const handleCloseShift = async () => {
   closingShift.value = true
   try {
     const rawCount = closeShiftForm.closingCashCount.replace(/,/g, '')
-    await api.post<any>(`/pos/sessions/${activeSession.value.id}/close`, {
+    await api.post(`/pos/sessions/${activeSession.value.id}/close`, {
       closingCashCount: rawCount || '0',
       notes: closeShiftForm.notes?.trim() || undefined,
     })
@@ -816,8 +826,8 @@ const handleCloseShift = async () => {
     activeSession.value = null
     closeShiftModal.value = false
     onBranchChange()
-  } catch (err: any) {
-    toast.error('ຜິດພາດ', err.message || 'ບໍ່ສາມາດປິດກະຂາຍໄດ້')
+  } catch (err) {
+    toast.error('ຜິດພາດ', errorMessage(err, 'ບໍ່ສາມາດປິດກະຂາຍໄດ້'))
   } finally {
     closingShift.value = false
   }
@@ -847,7 +857,7 @@ const updateClock = () => {
   currentTime.value = `${hours}:${minutes}`
 }
 
-let timer: any = null
+let timer: ReturnType<typeof setInterval> | null = null
 onMounted(() => {
   updateClock()
   timer = setInterval(updateClock, 1000)

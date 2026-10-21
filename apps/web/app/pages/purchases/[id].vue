@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { errorMessage } from '~/utils/errors'
 const route = useRoute()
 const api = useApiClient()
 const toast = useToast()
@@ -110,8 +111,8 @@ const fetchPurchase = async () => {
   try {
     purchase.value = await api.get<PurchaseDetail>(`/purchases/${purchaseId.value}`)
   }
-  catch (err: any) {
-    toast.error('ຜິດພາດ', err.message || 'ບໍ່ສາມາດດຶງຂໍ້ມູນໃບສັ່ງຊື້ໄດ້')
+  catch (err) {
+    toast.error('ຜິດພາດ', errorMessage(err, 'ບໍ່ສາມາດດຶງຂໍ້ມູນໃບສັ່ງຊື້ໄດ້'))
   }
   finally {
     loading.value = false
@@ -173,8 +174,8 @@ const submitReceiveGoods = async () => {
     showReceiptModal.value = false
     await fetchPurchase()
   }
-  catch (err: any) {
-    toast.error('ຜິດພາດ', err.message || 'ບໍ່ສາມາດຮັບສິນຄ້າໄດ້')
+  catch (err) {
+    toast.error('ຜິດພາດ', errorMessage(err, 'ບໍ່ສາມາດຮັບສິນຄ້າໄດ້'))
   }
   finally {
     receivingGoods.value = false
@@ -212,8 +213,8 @@ const submitPayment = async () => {
     showPaymentModal.value = false
     await fetchPurchase()
   }
-  catch (err: any) {
-    toast.error('ຜິດພາດ', err.message || 'ບໍ່ສາມາດຊຳລະເງິນໄດ້')
+  catch (err) {
+    toast.error('ຜິດພາດ', errorMessage(err, 'ບໍ່ສາມາດຊຳລະເງິນໄດ້'))
   }
   finally {
     recordingPayment.value = false
@@ -230,8 +231,8 @@ const cancelPurchase = async () => {
     toast.success('ຍົກເລີກສຳເລັດ', 'ໃບສັ່ງຊື້ຖືກຍົກເລີກຮຽບຮ້ອຍແລ້ວ')
     await fetchPurchase()
   }
-  catch (err: any) {
-    toast.error('ຜິດພາດ', err.message || 'ບໍ່ສາມາດຍົກເລີກໃບສັ່ງຊື້ໄດ້')
+  catch (err) {
+    toast.error('ຜິດພາດ', errorMessage(err, 'ບໍ່ສາມາດຍົກເລີກໃບສັ່ງຊື້ໄດ້'))
   }
 }
 

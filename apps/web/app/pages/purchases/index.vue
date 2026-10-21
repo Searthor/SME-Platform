@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { errorMessage } from '~/utils/errors'
 const api = useApiClient()
 const route = useRoute()
 const toast = useToast()
@@ -82,8 +83,8 @@ const fetchPurchases = async () => {
     const res = await api.get<{ items: PurchaseListItem[]; total: number }>(`/purchases?${params.toString()}`)
     purchases.value = res.items
   }
-  catch (err: any) {
-    toast.error('ຜິດພາດ', err.message || 'ບໍ່ສາມາດດຶງລາຍການສັ່ງຊື້ໄດ້')
+  catch (err) {
+    toast.error('ຜິດພາດ', errorMessage(err, 'ບໍ່ສາມາດດຶງລາຍການສັ່ງຊື້ໄດ້'))
   }
   finally {
     loading.value = false
@@ -150,8 +151,8 @@ const submitPayment = async () => {
     paymentModal.value = false
     await fetchPurchases()
   }
-  catch (err: any) {
-    toast.error('ຜິດພາດ', err.message || 'ບໍ່ສາມາດຊຳລະເງິນໄດ້')
+  catch (err) {
+    toast.error('ຜິດພາດ', errorMessage(err, 'ບໍ່ສາມາດຊຳລະເງິນໄດ້'))
   }
   finally {
     recordingPayment.value = false

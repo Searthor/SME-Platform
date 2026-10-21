@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common'
-import { Prisma, PromotionRewardType as PrismaRewardType, PromotionType as PrismaPromoType } from '@prisma/client'
+import { Prisma, type Promotion, type PromotionItem, PromotionRewardType as PrismaRewardType, PromotionType as PrismaPromoType } from '@prisma/client'
 import { errors } from '../../../common/errors/app.error'
 import { PrismaService } from '../../../core/database/prisma.service'
 import { IdService } from '../../../core/ids/id.service'
@@ -8,7 +8,6 @@ import {
   CreatePromotionDto,
   PromotionQueryDto,
   PromotionRewardType,
-  PromotionType,
   UpdatePromotionDto,
 } from '../api/dto/promotion.dto'
 
@@ -102,7 +101,7 @@ export class PromotionsRepository {
     const id = this.ids.generate()
 
     const created = await this.prisma.$transaction(async tx => {
-      const promo = await tx.promotion.create({
+      await tx.promotion.create({
         data: {
           id,
           businessId,
@@ -277,7 +276,7 @@ export class PromotionsRepository {
     })
   }
 
-  private mapPromotion(p: any) {
+  private mapPromotion(p: Promotion & { items?: PromotionItem[] }) {
     const now = new Date()
     let status = 'ACTIVE'
     if (!p.active) {
@@ -313,7 +312,7 @@ export class PromotionsRepository {
       maxDiscountCap: p.maxDiscountCap ? p.maxDiscountCap.toString() : null,
       active: p.active,
       status,
-      items: (p.items || []).map((i: any) => ({
+      items: (p.items || []).map(i => ({
         id: i.id,
         productId: i.productId,
         variantId: i.variantId,

@@ -84,7 +84,7 @@ export class CreatePromotionDto {
   endTime?: string
 
   @IsOptional()
-  daysOfWeek?: any
+  daysOfWeek?: string | string[]
 
   @IsString()
   @IsOptional()
@@ -194,7 +194,7 @@ export class UpdatePromotionDto {
   endTime?: string
 
   @IsOptional()
-  daysOfWeek?: any
+  daysOfWeek?: string | string[]
 
   @IsString()
   @IsOptional()

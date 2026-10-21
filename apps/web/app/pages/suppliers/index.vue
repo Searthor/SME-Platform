@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { errorMessage } from '~/utils/errors'
 const api = useApiClient()
 const toast = useToast()
 
@@ -60,8 +61,8 @@ const fetchSuppliers = async () => {
     const res = await api.get<{ items: SupplierItem[]; total: number }>(`/suppliers?${params.toString()}`)
     suppliers.value = res.items
   }
-  catch (err: any) {
-    toast.error('ຜິດພາດ', err.message || 'ບໍ່ສາມາດດຶງຂໍ້ມູນຜູ້ຈຳໜ່າຍໄດ້')
+  catch (err) {
+    toast.error('ຜິດພາດ', errorMessage(err, 'ບໍ່ສາມາດດຶງຂໍ້ມູນຜູ້ຈຳໜ່າຍໄດ້'))
   }
   finally {
     loading.value = false
@@ -147,8 +148,8 @@ const submitForm = async () => {
     showModal.value = false
     await fetchSuppliers()
   }
-  catch (err: any) {
-    toast.error('ຜິດພາດ', err.message || 'ບໍ່ສາມາດບັນທຶກຂໍ້ມູນໄດ້')
+  catch (err) {
+    toast.error('ຜິດພາດ', errorMessage(err, 'ບໍ່ສາມາດບັນທຶກຂໍ້ມູນໄດ້'))
   }
   finally {
     saving.value = false
@@ -162,8 +163,8 @@ const archiveSupplier = async (supplier: SupplierItem) => {
     toast.success('ສຳເລັດ', 'ປິດໃຊ້ງານຜູ້ຈຳໜ່າຍຮຽບຮ້ອຍແລ້ວ')
     await fetchSuppliers()
   }
-  catch (err: any) {
-    toast.error('ຜິດພາດ', err.message || 'ບໍ່ສາມາດປິດໃຊ້ງານໄດ້')
+  catch (err) {
+    toast.error('ຜິດພາດ', errorMessage(err, 'ບໍ່ສາມາດປິດໃຊ້ງານໄດ້'))
   }
 }
 
