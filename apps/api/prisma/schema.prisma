@@ -1,0 +1,1090 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  DISABLED
+}
+
+enum PlatformRole {
+  USER
+  SUPERADMIN
+}
+
+enum IdentityType {
+  EMAIL
+  PHONE
+}
+
+enum BusinessStatus {
+  ACTIVE
+  SUSPENDED
+  CLOSED
+}
+
+enum BranchStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum MemberStatus {
+  ACTIVE
+  INVITED
+  SUSPENDED
+}
+
+enum BusinessInvitationStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+}
+
+model User {
+  id                  String               @id @db.Uuid
+  displayName         String               @map("display_name") @db.VarChar(120)
+  locale              String               @default("lo") @db.VarChar(10)
+  status              UserStatus           @default(ACTIVE)
+  platformRole        PlatformRole         @default(USER) @map("platform_role")
+  createdAt           DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+  identities          UserIdentity[]
+  credential          PasswordCredential?
+  sessions            AuthSession[]
+  memberships         BusinessMember[]
+  auditLogs           AuditLog[]           @relation("AuditActor")
+  invitationsCreated  BusinessInvitation[] @relation("InvitationCreator")
+  invitationsAccepted BusinessInvitation[] @relation("InvitationAcceptor")
+
+  @@map("users")
+}
+
+model PlatformSettings {
+  id                  String   @id @default("default") @db.VarChar(32)
+  platformName        String   @default("SME Flow") @map("platform_name") @db.VarChar(120)
+  supportEmail        String?  @map("support_email") @db.VarChar(254)
+  defaultLocale       String   @default("lo") @map("default_locale") @db.VarChar(10)
+  defaultCurrencyCode String   @default("LAK") @map("default_currency_code") @db.Char(3)
+  defaultTimezone     String   @default("Asia/Vientiane") @map("default_timezone") @db.VarChar(80)
+  allowRegistration   Boolean  @default(true) @map("allow_registration")
+  version             Int      @default(1)
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("platform_settings")
+}
+
+model UserIdentity {
+  id              String       @id @db.Uuid
+  userId          String       @map("user_id") @db.Uuid
+  type            IdentityType
+  normalizedValue String       @map("normalized_value") @db.VarChar(254)
+  verifiedAt      DateTime?    @map("verified_at") @db.Timestamptz(6)
+  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([type, normalizedValue], map: "uq_user_identities_type_value")
+  @@index([userId], map: "idx_user_identities_user")
+  @@map("user_identities")
+}
+
+model PasswordCredential {
+  userId       String   @id @map("user_id") @db.Uuid
+  passwordHash String   @map("password_hash") @db.VarChar(255)
+  changedAt    DateTime @default(now()) @map("changed_at") @db.Timestamptz(6)
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("password_credentials")
+}
+
+model AuthSession {
+  id                 String    @id @db.Uuid
+  userId             String    @map("user_id") @db.Uuid
+  tokenFamilyId      String    @map("token_family_id") @db.Uuid
+  refreshTokenHash   String    @unique(map: "uq_auth_sessions_refresh_hash") @map("refresh_token_hash") @db.Char(64)
+  selectedBusinessId String?   @map("selected_business_id") @db.Uuid
+  selectedMemberId   String?   @map("selected_member_id") @db.Uuid
+  deviceName         String?   @map("device_name") @db.VarChar(120)
+  ipAddress          String?   @map("ip_address") @db.VarChar(64)
+  userAgent          String?   @map("user_agent") @db.VarChar(512)
+  expiresAt          DateTime  @map("expires_at") @db.Timestamptz(6)
+  lastUsedAt         DateTime? @map("last_used_at") @db.Timestamptz(6)
+  rotatedAt          DateTime? @map("rotated_at") @db.Timestamptz(6)
+  revokedAt          DateTime? @map("revoked_at") @db.Timestamptz(6)
+  replacedById       String?   @unique(map: "uq_auth_sessions_replaced_by") @map("replaced_by_id") @db.Uuid
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt], map: "idx_auth_sessions_user_revoked")
+  @@index([tokenFamilyId], map: "idx_auth_sessions_family")
+  @@index([expiresAt], map: "idx_auth_sessions_expires")
+  @@map("auth_sessions")
+}
+
+model Business {
+  id           String               @id @db.Uuid
+  name         String               @db.VarChar(160)
+  currencyCode String               @map("currency_code") @db.Char(3)
+  timezone     String               @db.VarChar(80)
+  status       BusinessStatus       @default(ACTIVE)
+  createdAt    DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+  branches     Branch[]
+  members      BusinessMember[]
+  roles        Role[]
+  invitations  BusinessInvitation[]
+  auditLogs    AuditLog[]
+  categories   Category[]
+  units        Unit[]
+  products     Product[]
+  variants     ProductVariant[]
+  barcodes     ProductBarcode[]
+  productUnits ProductUnit[]
+  warehouses   Warehouse[]
+  suppliers    Supplier[]
+  purchases    Purchase[]
+  goodsReceipts GoodsReceipt[]
+  payments     Payment[]
+  posRegisters PosRegister[]
+  posSessions  PosSession[]
+  sales        Sale[]
+  customerGroups CustomerGroup[]
+  customers      Customer[]
+  variantGroupPrices ProductVariantGroupPrice[]
+  promotions     Promotion[]
+  promotionItems PromotionItem[]
+
+  @@map("businesses")
+}
+
+model Branch {
+  id               String                           @db.Uuid
+  businessId       String                           @map("business_id") @db.Uuid
+  code             String                           @db.VarChar(40)
+  name             String                           @db.VarChar(160)
+  status           BranchStatus                     @default(ACTIVE)
+  createdAt        DateTime                         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime                         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  business         Business                         @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  grants           MemberBranchAccess[]
+  invitationGrants BusinessInvitationBranchAccess[]
+  warehouses       Warehouse[]
+  purchases        Purchase[]
+  payments         Payment[]
+  posRegisters     PosRegister[]
+  posSessions      PosSession[]
+  sales            Sale[]
+
+  @@id([businessId, id], map: "pk_branches_business_id")
+  @@unique([businessId, code], map: "uq_branches_business_code")
+  @@index([businessId, status], map: "idx_branches_business_status")
+  @@map("branches")
+}
+
+model BusinessMember {
+  id                   String               @db.Uuid
+  businessId           String               @map("business_id") @db.Uuid
+  userId               String               @map("user_id") @db.Uuid
+  status               MemberStatus         @default(ACTIVE)
+  allBranches          Boolean              @default(false) @map("all_branches")
+  authorizationVersion Int                  @default(1) @map("authorization_version")
+  createdAt            DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+  business             Business             @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  user                 User                 @relation(fields: [userId], references: [id], onDelete: Restrict)
+  branchAccess         MemberBranchAccess[]
+  roles                MemberRole[]
+
+  @@id([businessId, id], map: "pk_business_members_business_id")
+  @@unique([businessId, userId], map: "uq_business_members_business_user")
+  @@index([userId, status], map: "idx_business_members_user_status")
+  @@map("business_members")
+}
+
+model Role {
+  id          String                   @db.Uuid
+  businessId  String                   @map("business_id") @db.Uuid
+  code        String                   @db.VarChar(60)
+  name        String                   @db.VarChar(120)
+  isSystem    Boolean                  @default(false) @map("is_system")
+  createdAt   DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
+  business    Business                 @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  permissions RolePermission[]
+  members     MemberRole[]
+  invitations BusinessInvitationRole[]
+
+  @@id([businessId, id], map: "pk_roles_business_id")
+  @@unique([businessId, code], map: "uq_roles_business_code")
+  @@index([businessId, name], map: "idx_roles_business_name")
+  @@map("roles")
+}
+
+model Permission {
+  code        String           @id @db.VarChar(100)
+  description String           @db.VarChar(200)
+  module      String           @db.VarChar(60)
+  roles       RolePermission[]
+
+  @@index([module, code], map: "idx_permissions_module_code")
+  @@map("permissions")
+}
+
+model RolePermission {
+  businessId     String     @map("business_id") @db.Uuid
+  roleId         String     @map("role_id") @db.Uuid
+  permissionCode String     @map("permission_code") @db.VarChar(100)
+  createdAt      DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  role           Role       @relation(fields: [businessId, roleId], references: [businessId, id], onDelete: Cascade)
+  permission     Permission @relation(fields: [permissionCode], references: [code], onDelete: Restrict)
+
+  @@id([businessId, roleId, permissionCode], map: "pk_role_permissions")
+  @@index([permissionCode], map: "idx_role_permissions_permission")
+  @@map("role_permissions")
+}
+
+model MemberRole {
+  businessId String         @map("business_id") @db.Uuid
+  memberId   String         @map("member_id") @db.Uuid
+  roleId     String         @map("role_id") @db.Uuid
+  createdAt  DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  member     BusinessMember @relation(fields: [businessId, memberId], references: [businessId, id], onDelete: Cascade)
+  role       Role           @relation(fields: [businessId, roleId], references: [businessId, id], onDelete: Cascade)
+
+  @@id([businessId, memberId, roleId], map: "pk_member_roles")
+  @@index([businessId, roleId], map: "idx_member_roles_role")
+  @@map("member_roles")
+}
+
+model MemberBranchAccess {
+  id         String         @id @db.Uuid
+  businessId String         @map("business_id") @db.Uuid
+  memberId   String         @map("member_id") @db.Uuid
+  branchId   String         @map("branch_id") @db.Uuid
+  createdAt  DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  member     BusinessMember @relation(fields: [businessId, memberId], references: [businessId, id], onDelete: Cascade)
+  branch     Branch         @relation(fields: [businessId, branchId], references: [businessId, id], onDelete: Cascade)
+
+  @@unique([businessId, memberId, branchId], map: "uq_member_branch_access")
+  @@index([businessId, branchId], map: "idx_member_branch_access_branch")
+  @@map("member_branch_access")
+}
+
+model BusinessInvitation {
+  id                 String                           @db.Uuid
+  businessId         String                           @map("business_id") @db.Uuid
+  identityType       IdentityType                     @map("identity_type")
+  normalizedIdentity String                           @map("normalized_identity") @db.VarChar(254)
+  tokenHash          String                           @unique(map: "uq_business_invitations_token_hash") @map("token_hash") @db.Char(64)
+  status             BusinessInvitationStatus         @default(PENDING)
+  allBranches        Boolean                          @default(false) @map("all_branches")
+  expiresAt          DateTime                         @map("expires_at") @db.Timestamptz(6)
+  acceptedAt         DateTime?                        @map("accepted_at") @db.Timestamptz(6)
+  acceptedUserId     String?                          @map("accepted_user_id") @db.Uuid
+  createdByUserId    String                           @map("created_by_user_id") @db.Uuid
+  createdAt          DateTime                         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime                         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  business           Business                         @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  createdBy          User                             @relation("InvitationCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  acceptedBy         User?                            @relation("InvitationAcceptor", fields: [acceptedUserId], references: [id], onDelete: Restrict)
+  roles              BusinessInvitationRole[]
+  branchAccess       BusinessInvitationBranchAccess[]
+
+  @@id([businessId, id], map: "pk_business_invitations_business_id")
+  @@index([businessId, status, createdAt(sort: Desc)], map: "idx_business_invitations_status")
+  @@index([identityType, normalizedIdentity], map: "idx_business_invitations_identity")
+  @@map("business_invitations")
+}
+
+model BusinessInvitationRole {
+  businessId   String             @map("business_id") @db.Uuid
+  invitationId String             @map("invitation_id") @db.Uuid
+  roleId       String             @map("role_id") @db.Uuid
+  invitation   BusinessInvitation @relation(fields: [businessId, invitationId], references: [businessId, id], onDelete: Cascade)
+  role         Role               @relation(fields: [businessId, roleId], references: [businessId, id], onDelete: Restrict)
+
+  @@id([businessId, invitationId, roleId], map: "pk_business_invitation_roles")
+  @@index([businessId, roleId], map: "idx_business_invitation_roles_role")
+  @@map("business_invitation_roles")
+}
+
+model BusinessInvitationBranchAccess {
+  businessId   String             @map("business_id") @db.Uuid
+  invitationId String             @map("invitation_id") @db.Uuid
+  branchId     String             @map("branch_id") @db.Uuid
+  invitation   BusinessInvitation @relation(fields: [businessId, invitationId], references: [businessId, id], onDelete: Cascade)
+  branch       Branch             @relation(fields: [businessId, branchId], references: [businessId, id], onDelete: Restrict)
+
+  @@id([businessId, invitationId, branchId], map: "pk_business_invitation_branches")
+  @@index([businessId, branchId], map: "idx_business_invitation_branches_branch")
+  @@map("business_invitation_branch_access")
+}
+
+model AuditLog {
+  id         String    @id @db.Uuid
+  businessId String?   @map("business_id") @db.Uuid
+  userId     String?   @map("user_id") @db.Uuid
+  action     String    @db.VarChar(100)
+  entityType String    @map("entity_type") @db.VarChar(80)
+  entityId   String?   @map("entity_id") @db.Uuid
+  before     Json?
+  after      Json?
+  requestId  String?   @map("request_id") @db.VarChar(80)
+  ipAddress  String?   @map("ip_address") @db.VarChar(64)
+  userAgent  String?   @map("user_agent") @db.VarChar(512)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  business   Business? @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  user       User?     @relation("AuditActor", fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([businessId, createdAt(sort: Desc), id], map: "idx_audit_logs_business_created")
+  @@index([businessId, entityType, entityId], map: "idx_audit_logs_entity")
+  @@map("audit_logs")
+}
+
+model Category {
+  id         String     @db.Uuid
+  businessId String     @map("business_id") @db.Uuid
+  parentId   String?    @map("parent_id") @db.Uuid
+  name       String     @db.VarChar(120)
+  archivedAt DateTime?  @map("archived_at") @db.Timestamptz(6)
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  business   Business   @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  parent     Category?  @relation("CategoryTree", fields: [businessId, parentId], references: [businessId, id], onDelete: Restrict)
+  children   Category[] @relation("CategoryTree")
+  products   Product[]
+
+  @@id([businessId, id], map: "pk_categories_business_id")
+  @@unique([businessId, name], map: "uq_categories_business_name")
+  @@index([businessId, archivedAt, name], map: "idx_categories_business_archived_name")
+  @@map("categories")
+}
+
+model Unit {
+  id            String    @db.Uuid
+  businessId    String    @map("business_id") @db.Uuid
+  code          String    @db.VarChar(30)
+  name          String    @db.VarChar(80)
+  decimalPlaces Int       @default(0) @map("decimal_places")
+  active        Boolean   @default(true)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  business      Business      @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  products      Product[]
+  productUnits  ProductUnit[]
+
+  @@id([businessId, id], map: "pk_units_business_id")
+  @@unique([businessId, code], map: "uq_units_business_code")
+  @@index([businessId, active, name], map: "idx_units_business_active_name")
+  @@map("units")
+}
+
+model Product {
+  id             String           @db.Uuid
+  businessId     String           @map("business_id") @db.Uuid
+  categoryId     String?          @map("category_id") @db.Uuid
+  unitId         String           @map("unit_id") @db.Uuid
+  name           String           @db.VarChar(180)
+  description    String?          @db.VarChar(1000)
+  trackStock     Boolean          @default(true) @map("track_stock")
+  taxCode        String?          @map("tax_code") @db.VarChar(40)
+  active         Boolean          @default(true)
+  archivedAt     DateTime?        @map("archived_at") @db.Timestamptz(6)
+  version        Int              @default(1)
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  business       Business         @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  category       Category?        @relation(fields: [businessId, categoryId], references: [businessId, id], onDelete: Restrict)
+  unit           Unit             @relation(fields: [businessId, unitId], references: [businessId, id], onDelete: Restrict)
+  variants       ProductVariant[]
+  packagingUnits ProductUnit[]
+
+  @@id([businessId, id], map: "pk_products_business_id")
+  @@index([businessId, archivedAt, active, name], map: "idx_products_business_state_name")
+  @@index([businessId, categoryId], map: "idx_products_business_category")
+  @@map("products")
+}
+
+model ProductVariant {
+  id           String           @db.Uuid
+  businessId   String           @map("business_id") @db.Uuid
+  productId    String           @map("product_id") @db.Uuid
+  name         String?          @db.VarChar(120)
+  size         String?          @db.VarChar(60)
+  color        String?          @db.VarChar(60)
+  sku          String?          @db.VarChar(80)
+  cost         Decimal          @default(0) @db.Decimal(20, 4)
+  sellingPrice Decimal          @map("selling_price") @db.Decimal(20, 4)
+  minStock     Decimal          @default(0) @map("min_stock") @db.Decimal(20, 6)
+  isDefault    Boolean          @default(false) @map("is_default")
+  active       Boolean          @default(true)
+  createdAt    DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  business     Business         @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  product      Product          @relation(fields: [businessId, productId], references: [businessId, id], onDelete: Restrict)
+  barcodes     ProductBarcode[]
+  stockBalances     StockBalance[]
+  stockMovements    StockMovement[]
+  purchaseItems     PurchaseItem[]
+  goodsReceiptItems GoodsReceiptItem[]
+  saleItems         SaleItem[]
+  groupPrices       ProductVariantGroupPrice[]
+
+  @@id([businessId, id], map: "pk_product_variants_business_id")
+  @@unique([businessId, sku], map: "uq_product_variants_business_sku")
+  @@index([businessId, productId, active], map: "idx_product_variants_business_product")
+  @@map("product_variants")
+}
+
+model ProductBarcode {
+  id         String         @db.Uuid
+  businessId String         @map("business_id") @db.Uuid
+  variantId  String         @map("variant_id") @db.Uuid
+  barcode    String         @db.VarChar(100)
+  createdAt  DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  business   Business       @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  variant    ProductVariant @relation(fields: [businessId, variantId], references: [businessId, id], onDelete: Cascade)
+
+  @@id([businessId, id], map: "pk_product_barcodes_business_id")
+  @@unique([businessId, barcode], map: "uq_product_barcodes_business_barcode")
+  @@index([businessId, variantId], map: "idx_product_barcodes_business_variant")
+  @@map("product_barcodes")
+}
+
+model ProductUnit {
+  id             String   @db.Uuid
+  businessId     String   @map("business_id") @db.Uuid
+  productId      String   @map("product_id") @db.Uuid
+  unitId         String   @map("unit_id") @db.Uuid
+  conversionRate Decimal  @map("conversion_rate") @db.Decimal(20, 6)
+  sellingPrice   Decimal? @map("selling_price") @db.Decimal(20, 4)
+  barcode        String?  @db.VarChar(100)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  product  Product  @relation(fields: [businessId, productId], references: [businessId, id], onDelete: Cascade)
+  unit     Unit     @relation(fields: [businessId, unitId], references: [businessId, id], onDelete: Restrict)
+
+  @@id([businessId, id], map: "pk_product_units_business_id")
+  @@unique([businessId, productId, unitId], map: "uq_product_units_business_product_unit")
+  @@index([businessId, productId], map: "idx_product_units_business_product")
+  @@map("product_units")
+}
+
+enum WarehouseStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model Warehouse {
+  id         String          @db.Uuid
+  businessId String          @map("business_id") @db.Uuid
+  branchId   String          @map("branch_id") @db.Uuid
+  code       String          @db.VarChar(40)
+  name       String          @db.VarChar(160)
+  isDefault  Boolean         @default(false) @map("is_default")
+  status     WarehouseStatus @default(ACTIVE)
+  createdAt  DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  business      Business        @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  branch        Branch          @relation(fields: [businessId, branchId], references: [businessId, id], onDelete: Restrict)
+  stockBalances StockBalance[]
+  stockMovements StockMovement[]
+  purchases     Purchase[]
+  goodsReceipts GoodsReceipt[]
+  sales         Sale[]
+
+  @@id([businessId, id], map: "pk_warehouses_business_id")
+  @@unique([businessId, code], map: "uq_warehouses_business_code")
+  @@index([businessId, branchId, status], map: "idx_warehouses_business_branch_status")
+  @@map("warehouses")
+}
+
+model StockBalance {
+  id          String   @id @db.Uuid
+  businessId  String   @map("business_id") @db.Uuid
+  warehouseId String   @map("warehouse_id") @db.Uuid
+  variantId   String   @map("variant_id") @db.Uuid
+  quantity    Decimal  @default(0) @db.Decimal(20, 6)
+  version     Int      @default(1)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  warehouse   Warehouse      @relation(fields: [businessId, warehouseId], references: [businessId, id], onDelete: Restrict)
+  variant     ProductVariant @relation(fields: [businessId, variantId], references: [businessId, id], onDelete: Restrict)
+
+  @@unique([warehouseId, variantId], map: "uq_stock_balances_warehouse_variant")
+  @@index([businessId, warehouseId], map: "idx_stock_balances_business_warehouse")
+  @@index([businessId, variantId], map: "idx_stock_balances_business_variant")
+  @@map("stock_balances")
+}
+
+enum StockMovementType {
+  PURCHASE_RECEIPT
+  ADJUSTMENT
+  TRANSFER_IN
+  TRANSFER_OUT
+  SALE
+}
+
+model StockMovement {
+  id             String            @id @db.Uuid
+  businessId     String            @map("business_id") @db.Uuid
+  warehouseId    String            @map("warehouse_id") @db.Uuid
+  variantId      String            @map("variant_id") @db.Uuid
+  type           StockMovementType
+  quantityDelta  Decimal           @map("quantity_delta") @db.Decimal(20, 6)
+  referenceType  String?           @map("reference_type") @db.VarChar(50)
+  referenceId    String?           @map("reference_id") @db.Uuid
+  reversalOfId   String?           @map("reversal_of_id") @db.Uuid
+  actorUserId    String?           @map("actor_user_id") @db.Uuid
+  notes          String?           @db.VarChar(500)
+  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  warehouse      Warehouse         @relation(fields: [businessId, warehouseId], references: [businessId, id], onDelete: Restrict)
+  variant        ProductVariant    @relation(fields: [businessId, variantId], references: [businessId, id], onDelete: Restrict)
+
+  @@index([businessId, warehouseId, variantId, createdAt(sort: Desc)], map: "idx_stock_movements_history")
+  @@index([businessId, referenceType, referenceId], map: "idx_stock_movements_reference")
+  @@map("stock_movements")
+}
+
+enum SupplierStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+model Supplier {
+  id          String         @db.Uuid
+  businessId  String         @map("business_id") @db.Uuid
+  code        String         @db.VarChar(40)
+  name        String         @db.VarChar(180)
+  contactName String?        @map("contact_name") @db.VarChar(120)
+  phone       String?        @db.VarChar(50)
+  email       String?        @db.VarChar(254)
+  address     String?        @db.VarChar(500)
+  taxId       String?        @map("tax_id") @db.VarChar(50)
+  notes       String?        @db.VarChar(1000)
+  status      SupplierStatus @default(ACTIVE)
+  createdAt   DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  business    Business       @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  purchases   Purchase[]
+
+  @@id([businessId, id], map: "pk_suppliers_business_id")
+  @@unique([businessId, code], map: "uq_suppliers_business_code")
+  @@index([businessId, status, name], map: "idx_suppliers_business_status_name")
+  @@map("suppliers")
+}
+
+enum PurchaseLifecycleStatus {
+  DRAFT
+  ORDERED
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CANCELLED
+}
+
+enum PurchasePaymentStatus {
+  UNPAID
+  PARTIALLY_PAID
+  PAID
+}
+
+model Purchase {
+  id              String                  @db.Uuid
+  businessId      String                  @map("business_id") @db.Uuid
+  branchId        String                  @map("branch_id") @db.Uuid
+  warehouseId     String                  @map("warehouse_id") @db.Uuid
+  supplierId      String                  @map("supplier_id") @db.Uuid
+  purchaseNumber  String                  @map("purchase_number") @db.VarChar(50)
+  lifecycleStatus PurchaseLifecycleStatus @default(DRAFT) @map("lifecycle_status")
+  paymentStatus   PurchasePaymentStatus   @default(UNPAID) @map("payment_status")
+  currencyCode    String                  @map("currency_code") @db.Char(3)
+  subtotal        Decimal                 @default(0) @db.Decimal(20, 4)
+  taxAmount       Decimal                 @default(0) @map("tax_amount") @db.Decimal(20, 4)
+  grandTotal      Decimal                 @default(0) @map("grand_total") @db.Decimal(20, 4)
+  paidAmount      Decimal                 @default(0) @map("paid_amount") @db.Decimal(20, 4)
+  notes           String?                 @db.VarChar(1000)
+  orderedAt       DateTime?               @map("ordered_at") @db.Timestamptz(6)
+  expectedAt      DateTime?               @map("expected_at") @db.Timestamptz(6)
+  createdByUserId String                  @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime                @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  business        Business                @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  branch          Branch                  @relation(fields: [businessId, branchId], references: [businessId, id], onDelete: Restrict)
+  warehouse       Warehouse               @relation(fields: [businessId, warehouseId], references: [businessId, id], onDelete: Restrict)
+  supplier        Supplier                @relation(fields: [businessId, supplierId], references: [businessId, id], onDelete: Restrict)
+  items           PurchaseItem[]
+  goodsReceipts   GoodsReceipt[]
+  paymentAllocations PaymentAllocation[]
+
+  @@id([businessId, id], map: "pk_purchases_business_id")
+  @@unique([businessId, purchaseNumber], map: "uq_purchases_business_number")
+  @@index([businessId, supplierId, createdAt(sort: Desc)], map: "idx_purchases_business_supplier")
+  @@index([businessId, lifecycleStatus, paymentStatus], map: "idx_purchases_business_statuses")
+  @@map("purchases")
+}
+
+model PurchaseItem {
+  id               String               @db.Uuid
+  businessId       String               @map("business_id") @db.Uuid
+  purchaseId       String               @map("purchase_id") @db.Uuid
+  variantId        String               @map("variant_id") @db.Uuid
+  orderedQuantity  Decimal              @map("ordered_quantity") @db.Decimal(20, 6)
+  receivedQuantity Decimal              @default(0) @map("received_quantity") @db.Decimal(20, 6)
+  unitCost         Decimal              @map("unit_cost") @db.Decimal(20, 4)
+  subtotal         Decimal              @db.Decimal(20, 4)
+  taxAmount        Decimal              @default(0) @map("tax_amount") @db.Decimal(20, 4)
+  totalAmount      Decimal              @map("total_amount") @db.Decimal(20, 4)
+  createdAt        DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  purchase         Purchase             @relation(fields: [businessId, purchaseId], references: [businessId, id], onDelete: Cascade)
+  variant          ProductVariant       @relation(fields: [businessId, variantId], references: [businessId, id], onDelete: Restrict)
+  receiptItems     GoodsReceiptItem[]
+
+  @@id([businessId, id], map: "pk_purchase_items_business_id")
+  @@index([businessId, purchaseId], map: "idx_purchase_items_purchase")
+  @@map("purchase_items")
+}
+
+model GoodsReceipt {
+  id               String             @db.Uuid
+  businessId       String             @map("business_id") @db.Uuid
+  purchaseId       String             @map("purchase_id") @db.Uuid
+  warehouseId      String             @map("warehouse_id") @db.Uuid
+  receiptNumber    String             @map("receipt_number") @db.VarChar(50)
+  notes            String?            @db.VarChar(1000)
+  receivedAt       DateTime           @default(now()) @map("received_at") @db.Timestamptz(6)
+  receivedByUserId String             @map("received_by_user_id") @db.Uuid
+  createdAt        DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  business         Business           @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  purchase         Purchase           @relation(fields: [businessId, purchaseId], references: [businessId, id], onDelete: Restrict)
+  warehouse        Warehouse          @relation(fields: [businessId, warehouseId], references: [businessId, id], onDelete: Restrict)
+  items            GoodsReceiptItem[]
+
+  @@id([businessId, id], map: "pk_goods_receipts_business_id")
+  @@unique([businessId, receiptNumber], map: "uq_goods_receipts_business_number")
+  @@index([businessId, purchaseId], map: "idx_goods_receipts_purchase")
+  @@map("goods_receipts")
+}
+
+model GoodsReceiptItem {
+  id               String         @db.Uuid
+  businessId       String         @map("business_id") @db.Uuid
+  goodsReceiptId   String         @map("goods_receipt_id") @db.Uuid
+  purchaseItemId   String         @map("purchase_item_id") @db.Uuid
+  variantId        String         @map("variant_id") @db.Uuid
+  receivedQuantity Decimal        @map("received_quantity") @db.Decimal(20, 6)
+  unitCost         Decimal        @map("unit_cost") @db.Decimal(20, 4)
+  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  goodsReceipt     GoodsReceipt   @relation(fields: [businessId, goodsReceiptId], references: [businessId, id], onDelete: Cascade)
+  purchaseItem     PurchaseItem   @relation(fields: [businessId, purchaseItemId], references: [businessId, id], onDelete: Restrict)
+  variant          ProductVariant @relation(fields: [businessId, variantId], references: [businessId, id], onDelete: Restrict)
+
+  @@id([businessId, id], map: "pk_goods_receipt_items_business_id")
+  @@index([businessId, goodsReceiptId], map: "idx_goods_receipt_items_receipt")
+  @@map("goods_receipt_items")
+}
+
+enum PaymentDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum PaymentMethod {
+  CASH
+  BANK_TRANSFER
+  OTHER
+}
+
+enum PaymentAllocationTargetType {
+  PURCHASE
+  SALE
+}
+
+model Payment {
+  id              String            @db.Uuid
+  businessId      String            @map("business_id") @db.Uuid
+  branchId        String            @map("branch_id") @db.Uuid
+  direction       PaymentDirection  @default(OUTBOUND)
+  method          PaymentMethod     @default(CASH)
+  amount          Decimal           @db.Decimal(20, 4)
+  currencyCode    String            @map("currency_code") @db.Char(3)
+  paidAt          DateTime          @default(now()) @map("paid_at") @db.Timestamptz(6)
+  reference       String?           @db.VarChar(120)
+  notes           String?           @db.VarChar(500)
+  createdByUserId String            @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  business        Business          @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  branch          Branch            @relation(fields: [businessId, branchId], references: [businessId, id], onDelete: Restrict)
+  allocations     PaymentAllocation[]
+
+  @@id([businessId, id], map: "pk_payments_business_id")
+  @@index([businessId, branchId, paidAt(sort: Desc)], map: "idx_payments_business_branch_paid")
+  @@map("payments")
+}
+
+model PaymentAllocation {
+  id         String                      @db.Uuid
+  businessId String                      @map("business_id") @db.Uuid
+  paymentId  String                      @map("payment_id") @db.Uuid
+  targetType PaymentAllocationTargetType @map("target_type")
+  targetId   String                      @map("target_id") @db.Uuid
+  amount     Decimal                     @db.Decimal(20, 4)
+  createdAt  DateTime                    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  payment    Payment                     @relation(fields: [businessId, paymentId], references: [businessId, id], onDelete: Cascade)
+  purchase   Purchase?                   @relation(fields: [businessId, targetId], references: [businessId, id], onDelete: Restrict)
+
+  @@id([businessId, id], map: "pk_payment_allocations_business_id")
+  @@index([businessId, paymentId], map: "idx_payment_allocations_payment")
+  @@index([businessId, targetType, targetId], map: "idx_payment_allocations_target")
+  @@map("payment_allocations")
+}
+
+// ====================================================
+// POS AND SALES DOMAIN MODELS
+// ====================================================
+
+model PosRegister {
+  id         String       @db.Uuid
+  businessId String       @map("business_id") @db.Uuid
+  branchId   String       @map("branch_id") @db.Uuid
+  code       String       @db.VarChar(50)
+  name       String       @db.VarChar(120)
+  active     Boolean      @default(true)
+  createdAt  DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  business   Business     @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  branch     Branch       @relation(fields: [businessId, branchId], references: [businessId, id], onDelete: Restrict)
+  sessions   PosSession[]
+
+  @@id([businessId, id], map: "pk_pos_registers_business_id")
+  @@unique([businessId, branchId, code], map: "uq_pos_registers_code")
+  @@map("pos_registers")
+}
+
+enum PosSessionStatus {
+  OPEN
+  CLOSED
+}
+
+model PosSession {
+  id               String            @db.Uuid
+  businessId       String            @map("business_id") @db.Uuid
+  branchId         String            @map("branch_id") @db.Uuid
+  registerId       String            @map("register_id") @db.Uuid
+  sessionNumber    String            @map("session_number") @db.VarChar(50)
+  status           PosSessionStatus  @default(OPEN)
+  
+  openedAt         DateTime          @default(now()) @map("opened_at") @db.Timestamptz(6)
+  openedByUserId   String            @map("opened_by_user_id") @db.Uuid
+  openingCash      Decimal           @default(0) @map("opening_cash") @db.Decimal(20, 4)
+
+  closedAt         DateTime?         @map("closed_at") @db.Timestamptz(6)
+  closedByUserId   String?           @map("closed_by_user_id") @db.Uuid
+  closingCashCount Decimal?          @map("closing_cash_count") @db.Decimal(20, 4)
+  expectedCash     Decimal?          @map("expected_cash") @db.Decimal(20, 4)
+  cashDifference   Decimal?          @map("cash_difference") @db.Decimal(20, 4)
+  notes            String?           @db.VarChar(1000)
+
+  totalSalesCount  Int               @default(0) @map("total_sales_count")
+  totalGrossSales  Decimal           @default(0) @map("total_gross_sales") @db.Decimal(20, 4)
+  totalDiscount    Decimal           @default(0) @map("total_discount") @db.Decimal(20, 4)
+  totalNetSales    Decimal           @default(0) @map("total_net_sales") @db.Decimal(20, 4)
+  totalCashSales   Decimal           @default(0) @map("total_cash_sales") @db.Decimal(20, 4)
+  totalBankSales   Decimal           @default(0) @map("total_bank_sales") @db.Decimal(20, 4)
+  totalCreditSales Decimal           @default(0) @map("total_credit_sales") @db.Decimal(20, 4)
+  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  business         Business          @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  branch           Branch            @relation(fields: [businessId, branchId], references: [businessId, id], onDelete: Restrict)
+  register         PosRegister       @relation(fields: [businessId, registerId], references: [businessId, id], onDelete: Restrict)
+  sales            Sale[]
+  cashMovements    PosCashMovement[]
+
+  @@id([businessId, id], map: "pk_pos_sessions_business_id")
+  @@unique([businessId, sessionNumber], map: "uq_pos_sessions_number")
+  @@index([businessId, branchId, status], map: "idx_pos_sessions_branch_status")
+  @@map("pos_sessions")
+}
+
+enum CashMovementType {
+  CASH_IN
+  CASH_OUT
+}
+
+model PosCashMovement {
+  id          String           @db.Uuid
+  businessId  String           @map("business_id") @db.Uuid
+  sessionId   String           @map("session_id") @db.Uuid
+  type        CashMovementType
+  amount      Decimal          @db.Decimal(20, 4)
+  reason      String           @db.VarChar(255)
+  performedBy String           @map("performed_by") @db.Uuid
+  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  session     PosSession       @relation(fields: [businessId, sessionId], references: [businessId, id], onDelete: Cascade)
+
+  @@id([businessId, id], map: "pk_pos_cash_movements_business_id")
+  @@index([businessId, sessionId], map: "idx_pos_cash_movements_session")
+  @@map("pos_cash_movements")
+}
+
+enum SaleLifecycleStatus {
+  COMPLETED
+  CANCELLED
+}
+
+enum SalePaymentStatus {
+  PAID
+  PARTIALLY_PAID
+  UNPAID
+}
+
+model Sale {
+  id              String              @db.Uuid
+  businessId      String              @map("business_id") @db.Uuid
+  branchId        String              @map("branch_id") @db.Uuid
+  warehouseId     String              @map("warehouse_id") @db.Uuid
+  posSessionId    String?             @map("pos_session_id") @db.Uuid
+  saleNumber      String              @map("sale_number") @db.VarChar(50)
+  customerId      String?             @map("customer_id") @db.Uuid
+  customerName    String?             @map("customer_name") @db.VarChar(160)
+  
+  currencyCode    String              @default("LAK") @map("currency_code") @db.Char(3)
+  subtotal        Decimal             @db.Decimal(20, 4)
+  discountAmount  Decimal             @default(0) @map("discount_amount") @db.Decimal(20, 4)
+  taxAmount       Decimal             @default(0) @map("tax_amount") @db.Decimal(20, 4)
+  grandTotal      Decimal             @db.Decimal(20, 4)
+  paidAmount      Decimal             @default(0) @map("paid_amount") @db.Decimal(20, 4)
+  changeAmount    Decimal             @default(0) @map("change_amount") @db.Decimal(20, 4)
+
+  lifecycleStatus SaleLifecycleStatus @default(COMPLETED) @map("lifecycle_status")
+  paymentStatus   SalePaymentStatus   @default(PAID) @map("payment_status")
+  
+  soldAt          DateTime            @default(now()) @map("sold_at") @db.Timestamptz(6)
+  cashierUserId   String              @map("cashier_user_id") @db.Uuid
+  promotionId     String?             @map("promotion_id") @db.Uuid
+  notes           String?             @db.VarChar(500)
+  createdAt       DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  business        Business            @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  branch          Branch              @relation(fields: [businessId, branchId], references: [businessId, id], onDelete: Restrict)
+  warehouse       Warehouse           @relation(fields: [businessId, warehouseId], references: [businessId, id], onDelete: Restrict)
+  session         PosSession?         @relation(fields: [businessId, posSessionId], references: [businessId, id], onDelete: SetNull)
+  customer        Customer?           @relation(fields: [businessId, customerId], references: [businessId, id], onDelete: SetNull)
+  items           SaleItem[]
+  payments        SalePayment[]
+
+  @@id([businessId, id], map: "pk_sales_business_id")
+  @@unique([businessId, saleNumber], map: "uq_sales_number")
+  @@index([businessId, posSessionId], map: "idx_sales_session")
+  @@index([businessId, soldAt(sort: Desc)], map: "idx_sales_business_date")
+  @@map("sales")
+}
+
+model SaleItem {
+  id              String         @db.Uuid
+  businessId      String         @map("business_id") @db.Uuid
+  saleId          String         @map("sale_id") @db.Uuid
+  variantId       String         @map("variant_id") @db.Uuid
+  productName     String         @map("product_name") @db.VarChar(200)
+  variantName     String?        @map("variant_name") @db.VarChar(100)
+  unitName        String?        @map("unit_name") @db.VarChar(80)
+  quantity        Decimal        @db.Decimal(20, 6)
+  unitCost        Decimal        @map("unit_cost") @db.Decimal(20, 4)
+  unitPrice       Decimal        @map("unit_price") @db.Decimal(20, 4)
+  discountAmount  Decimal        @default(0) @map("discount_amount") @db.Decimal(20, 4)
+  promotionId     String?        @map("promotion_id") @db.Uuid
+  isPromoGift     Boolean        @default(false) @map("is_promo_gift")
+  subtotal        Decimal        @db.Decimal(20, 4)
+  taxAmount       Decimal        @default(0) @map("tax_amount") @db.Decimal(20, 4)
+  totalAmount     Decimal        @map("total_amount") @db.Decimal(20, 4)
+
+  sale            Sale           @relation(fields: [businessId, saleId], references: [businessId, id], onDelete: Cascade)
+  variant         ProductVariant @relation(fields: [businessId, variantId], references: [businessId, id], onDelete: Restrict)
+
+  @@id([businessId, id], map: "pk_sale_items_business_id")
+  @@map("sale_items")
+}
+
+model SalePayment {
+  id              String         @db.Uuid
+  businessId      String         @map("business_id") @db.Uuid
+  saleId          String         @map("sale_id") @db.Uuid
+  method          PaymentMethod  @default(CASH)
+  amount          Decimal        @db.Decimal(20, 4)
+  tenderedAmount  Decimal?       @map("tendered_amount") @db.Decimal(20, 4)
+  changeAmount    Decimal?       @map("change_amount") @db.Decimal(20, 4)
+  reference       String?        @db.VarChar(120)
+  notes           String?        @db.VarChar(255)
+  paidAt          DateTime       @default(now()) @map("paid_at") @db.Timestamptz(6)
+
+  sale            Sale           @relation(fields: [businessId, saleId], references: [businessId, id], onDelete: Cascade)
+
+  @@id([businessId, id], map: "pk_sale_payments_business_id")
+  @@index([businessId, saleId], map: "idx_sale_payments_sale")
+  @@map("sale_payments")
+}
+
+model CustomerGroup {
+  id              String                     @db.Uuid
+  businessId      String                     @map("business_id") @db.Uuid
+  name            String                     @db.VarChar(100)
+  code            String                     @db.VarChar(40)
+  description     String?                    @db.VarChar(255)
+  discountPercent Decimal                    @default(0) @map("discount_percent") @db.Decimal(5, 2)
+  isDefault       Boolean                    @default(false) @map("is_default")
+  active          Boolean                    @default(true)
+  createdAt       DateTime                   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  business        Business                   @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  customers       Customer[]
+  groupPrices     ProductVariantGroupPrice[]
+
+  @@id([businessId, id], map: "pk_customer_groups_business_id")
+  @@unique([businessId, code], map: "uq_customer_groups_code")
+  @@index([businessId, active], map: "idx_customer_groups_active")
+  @@map("customer_groups")
+}
+
+model Customer {
+  id              String         @db.Uuid
+  businessId      String         @map("business_id") @db.Uuid
+  groupId         String?        @map("group_id") @db.Uuid
+  code            String?        @db.VarChar(50)
+  name            String         @db.VarChar(160)
+  phone           String?        @db.VarChar(40)
+  email           String?        @db.VarChar(254)
+  taxNumber       String?        @map("tax_number") @db.VarChar(50)
+  address         String?        @db.VarChar(500)
+  creditLimit     Decimal        @default(0) @map("credit_limit") @db.Decimal(20, 4)
+  notes           String?        @db.VarChar(500)
+  active          Boolean        @default(true)
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  business        Business       @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  group           CustomerGroup? @relation(fields: [businessId, groupId], references: [businessId, id], onDelete: SetNull)
+  sales           Sale[]
+
+  @@id([businessId, id], map: "pk_customers_business_id")
+  @@index([businessId, phone], map: "idx_customers_phone")
+  @@index([businessId, name], map: "idx_customers_name")
+  @@map("customers")
+}
+
+model ProductVariantGroupPrice {
+  id              String         @db.Uuid
+  businessId      String         @map("business_id") @db.Uuid
+  variantId       String         @map("variant_id") @db.Uuid
+  customerGroupId String         @map("customer_group_id") @db.Uuid
+  price           Decimal        @db.Decimal(20, 4)
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  business        Business       @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  variant         ProductVariant @relation(fields: [businessId, variantId], references: [businessId, id], onDelete: Cascade)
+  customerGroup   CustomerGroup  @relation(fields: [businessId, customerGroupId], references: [businessId, id], onDelete: Cascade)
+
+  @@id([businessId, id], map: "pk_variant_group_prices_business_id")
+  @@unique([businessId, variantId, customerGroupId], map: "uq_variant_group_price")
+  @@index([businessId, customerGroupId], map: "idx_variant_group_prices_group")
+  @@map("product_variant_group_prices")
+}
+
+enum PromotionType {
+  DISCOUNT
+  BUY_X_GET_Y
+  BUNDLE_CROSS
+  BILL_TOTAL
+}
+
+enum PromotionRewardType {
+  DISCOUNT_PERCENT
+  DISCOUNT_AMOUNT
+  SPECIAL_PRICE
+  FREE_ITEM
+}
+
+model Promotion {
+  id                    String              @db.Uuid
+  businessId            String              @map("business_id") @db.Uuid
+  name                  String              @db.VarChar(160)
+  code                  String              @db.VarChar(50)
+  description           String?             @db.VarChar(500)
+  type                  PromotionType       @default(DISCOUNT)
+  startDate             DateTime            @map("start_date") @db.Timestamptz(6)
+  endDate               DateTime            @map("end_date") @db.Timestamptz(6)
+  startTime             String?             @map("start_time") @db.VarChar(10)
+  endTime               String?             @map("end_time") @db.VarChar(10)
+  daysOfWeek            String?             @map("days_of_week") @db.VarChar(30)
+  branchScope           String?             @map("branch_scope") @db.VarChar(40)
+  customerGroupScope    String?             @map("customer_group_scope") @db.VarChar(40)
+  minQuantity           Decimal             @default(1) @map("min_quantity") @db.Decimal(20, 6)
+  minAmount             Decimal             @default(0) @map("min_amount") @db.Decimal(20, 4)
+  rewardType            PromotionRewardType @default(DISCOUNT_PERCENT) @map("reward_type")
+  discountValue         Decimal             @default(0) @map("discount_value") @db.Decimal(20, 4)
+  rewardQuantity        Decimal             @default(1) @map("reward_quantity") @db.Decimal(20, 6)
+  rewardDiscountPercent Decimal             @default(100) @map("reward_discount_percent") @db.Decimal(5, 2)
+  rewardProductId       String?             @map("reward_product_id") @db.Uuid
+  rewardVariantId       String?             @map("reward_variant_id") @db.Uuid
+  rewardUnitId          String?             @map("reward_unit_id") @db.Uuid
+  maxDiscountCap        Decimal?            @map("max_discount_cap") @db.Decimal(20, 4)
+  active                Boolean             @default(true)
+  createdAt             DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  business              Business            @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  items                 PromotionItem[]
+
+  @@id([businessId, id], map: "pk_promotions_business_id")
+  @@unique([businessId, code], map: "uq_promotions_code")
+  @@index([businessId, active], map: "idx_promotions_active")
+  @@index([businessId, startDate, endDate], map: "idx_promotions_date_range")
+  @@map("promotions")
+}
+
+model PromotionItem {
+  id          String    @db.Uuid
+  businessId  String    @map("business_id") @db.Uuid
+  promotionId String    @map("promotion_id") @db.Uuid
+  productId   String?   @map("product_id") @db.Uuid
+  variantId   String?   @map("variant_id") @db.Uuid
+  unitId      String?   @map("unit_id") @db.Uuid
+  categoryId  String?   @map("category_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  business    Business  @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  promotion   Promotion @relation(fields: [businessId, promotionId], references: [businessId, id], onDelete: Cascade)
+
+  @@id([businessId, id], map: "pk_promotion_items_business_id")
+  @@index([businessId, promotionId], map: "idx_promotion_items_promo")
+  @@index([businessId, productId], map: "idx_promotion_items_product")
+  @@index([businessId, variantId], map: "idx_promotion_items_variant")
+  @@index([businessId, unitId], map: "idx_promotion_items_unit")
+  @@map("promotion_items")
+}
+
+
+
+

@@ -1,0 +1,161 @@
+@import "tailwindcss";
+
+/*
+ * System font — matching citschool-nest-core/web-admin
+ * Files are self-hosted in public/fonts
+ */
+@font-face {
+  font-family: 'Phetsarath OT';
+  src: local('Phetsarath OT'), local('PhetsarathOT'),
+    url('/fonts/PhetsarathOT-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Noto Sans Lao';
+  src: local('Noto Sans Lao'), local('NotoSansLao-Regular'),
+    url('/fonts/NotoSansLao-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@theme {
+  --font-sans: "Phetsarath OT", "Noto Sans Lao", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --color-ink-950: #0f172a;
+  --color-ink-700: #334155;
+  --color-ink-500: #64748b;
+  --color-canvas: #f8fafc;
+  --color-brand-700: #4a3bd9;
+  --color-brand-600: #5b4cf5;
+  --color-brand-500: #7568ff;
+  --color-brand-100: #eff2fe;
+  --color-sun-400: #f4b942;
+  --color-navy-950: #0f172a;
+  --color-navy-900: #1e293b;
+  --color-navy-800: #334155;
+  --color-line: #e2e8f0;
+  --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.05), 0 1px 2px -1px rgb(0 0 0 / 0.05);
+  --shadow-pop: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+  --radius-card: 1rem;
+}
+
+:root {
+  --ui-root-font-size: 15px;
+  color: #0f172a;
+  background: #f8fafc;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+html, body {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.6;
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: #f8fafc;
+}
+
+/* Native form controls inherit font and styles */
+input, select, textarea, button, optgroup {
+  font-family: inherit;
+}
+
+h1,
+h2,
+h3 {
+  line-height: 1.32;
+  text-wrap: balance;
+}
+
+p {
+  text-wrap: pretty;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+::selection {
+  color: white;
+  background: var(--color-brand-600);
+}
+
+.focus-ring {
+  @apply outline-none transition focus:border-[#5b4cf5] focus-visible:border-[#5b4cf5];
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+.surface-shadow {
+  box-shadow: 0 12px 28px rgb(22 37 31 / 5%);
+}
+
+.admin-field {
+  @apply h-10 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs text-slate-700 outline-none transition placeholder:text-slate-400 hover:border-slate-300 focus:border-[#5b4cf5] focus-visible:border-[#5b4cf5];
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+.admin-field:focus,
+.admin-field:focus-visible {
+  border-color: #5b4cf5 !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+.app-sidebar {
+  box-shadow: 1px 0 0 rgb(22 37 31 / 5%);
+}
+
+.app-nav-link {
+  @apply relative flex h-10 w-full items-center gap-2.5 rounded-xl px-3 text-[0.72rem] font-bold transition;
+}
+
+.app-nav-link-active {
+  @apply bg-brand-100 text-brand-700 shadow-[inset_0_0_0_1px_rgb(8_125_103_/_8%)];
+}
+
+.app-nav-link-idle {
+  @apply text-[#687570] hover:bg-[#f4f7f5] hover:text-[#26332e];
+}
+
+.page-eyebrow {
+  @apply text-[0.66rem] font-extrabold tracking-[0.13em] text-brand-600 uppercase;
+}
+
+.page-card {
+  @apply rounded-2xl border border-line bg-white shadow-card;
+}
+
+.sidebar-surface {
+  background: linear-gradient(180deg, var(--color-navy-900) 0%, var(--color-navy-950) 100%);
+}
+
+.brand-gradient {
+  background: linear-gradient(135deg, var(--color-brand-500) 0%, var(--color-brand-700) 100%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none !important;
+  scrollbar-width: none !important;
+}
+
